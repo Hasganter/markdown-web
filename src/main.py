@@ -7,13 +7,12 @@ from pathlib import Path
 from typing import List
 
 # Set up a basic root logger for early messages before full setup.
-# This handler will be replaced by a more robust one later.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)-8s - [console] - %(message)s',
     stream=sys.stdout
 )
-console_logger = logging.getLogger("console")
+logger = logging.getLogger("console")
 
 # --- Platform-specific non-blocking keypress detection ---
 try:
@@ -21,24 +20,19 @@ try:
     def is_keypress_waiting() -> bool:
         return msvcrt.kbhit()
     def clear_keypress_buffer() -> None:
-        # Read all waiting characters to clear the buffer
-        while msvcrt.kbhit():
-            msvcrt.getch()
+        msvcrt.getch()
 except ImportError:
     import select
-    import termios
-    import tty
     def is_keypress_waiting() -> bool:
         return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
     def clear_keypress_buffer() -> None:
-        # For Unix, we drain the stdin buffer
-        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        sys.stdin.read(1)
 
 # --- Defer other imports after initial logging setup ---
 import psutil
 
 from src.local.config import effective_settings as config
-from src.local.database import LogDBManager, LogEntry
+from src.local.database import LogDBManager
 from src.local.manager import ProcessManager
 from src.log.export import export_logs_to_excel
 
@@ -47,23 +41,15 @@ stop_log_listener = threading.Event()
 current_overrides: dict = {}
 process_manager = ProcessManager()
 CONSOLE_LOCK = threading.Lock()
-VERBOSE_LOGGING = False # Global flag for verbose console output
 
 
-def set_console_log_level(verbose: bool) -> None:
-    """Adjusts the console logging handler's level."""
-    global VERBOSE_LOGGING
-    VERBOSE_LOGGING = verbose
-    level = logging.DEBUG if verbose else logging.INFO
-    
-    # Find the console handler on the root logger and set its level
-    # This assumes a handler is configured that outputs to a stream (stdout/stderr)
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            handler.setLevel(level)
-            console_logger.info(f"Console log level set to {'DEBUG' if verbose else 'INFO'}.")
-            break
+class ListHandler(logging.Handler):
+    """A logging handler that collects log records into a list."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.records: List[str] = []
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(self.format(record))
 
 
 def load_current_overrides() -> None:
@@ -76,7 +62,7 @@ def load_current_overrides() -> None:
             with config.OVERRIDES_JSON_PATH.open('r') as f:
                 current_overrides = json.load(f)
         except (json.JSONDecodeError, IOError) as e:
-            console_logger.warning(f"Could not load overrides from json: {e}")
+            logger.warning(f"Could not load overrides from json: {e}")
             current_overrides = {}
     else:
         current_overrides = {}
@@ -178,7 +164,7 @@ def display_status() -> None:
             if psutil.pid_exists(pid):
                 p = psutil.Process(pid)
                 # For more detail, you can add p.memory_info(), p.cpu_percent()
-                print(f"  - {name:<20} : PID {pid:<8} | Status: {p.status().upper()} | Name: {p.name()}")
+                print(f"  - {name:<20} : PID {pid:<8} | Status: {p.status().upper()}")
                 all_stale = False
             else:
                 print(f"  - {name:<20} : PID {pid:<8} | Status: STOPPED (Stale PID)")
@@ -188,16 +174,11 @@ def display_status() -> None:
             print(f"  - {name:<20} : PID {pid:<8} | Status: RUNNING (Access Denied)")
             all_stale = False
 
+
     if all_stale:
         print("\nWARNING: All processes are stopped but a stale PID file exists.")
         print("You should run 'stop' to clean it up before starting again.")
     print("-" * 28 + "\n")
-
-
-def format_log_entry(log: LogEntry) -> str:
-    """Formats a LogEntry namedtuple into a consistent string for display."""
-    dt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(log.timestamp))
-    return f"{dt},{str(log.timestamp).split('.')[1][:3]:<3} - {log.level:<8} - [{log.module}] - {log.message}"
 
 
 def handle_logs_command() -> None:
@@ -216,10 +197,10 @@ def handle_logs_command() -> None:
     try:
         # Use the manager method to fetch logs.
         for log in log_db.fetch_last_entries(config.LOG_HISTORY_COUNT):
-            print(format_log_entry(log))
+            print(log.message)
             last_ts = max(last_ts, log.timestamp)
     except Exception as e:
-        console_logger.error(f"Failed to fetch initial log history: {e}")
+        logger.error(f"Failed to fetch initial log history: {e}")
         return
 
     print("\n--- Now tailing new log entries (Press any key to stop) ---\n")
@@ -229,14 +210,14 @@ def handle_logs_command() -> None:
             # Use the manager method to listen for updates.
             new_logs, last_ts = log_db.listen_for_updates(last_ts)
             for log in new_logs:
-                print(format_log_entry(log))
+                print(log.message)
             time.sleep(1) # Poll interval
         clear_keypress_buffer()
         print("\n--- Log tailing stopped. Returning to console. ---")
     except (KeyboardInterrupt, SystemExit):
         print("\n--- Log tailing interrupted. Returning to console. ---")
     except Exception as e:
-        console_logger.error(f"An error occurred during log tailing: {e}", exc_info=True)
+        logger.error(f"An error occurred during log tailing: {e}", exc_info=True)
 
 
 def execute_command(command: str, args: List[str]) -> bool:
@@ -249,35 +230,35 @@ def execute_command(command: str, args: List[str]) -> bool:
     """
     # Command mapping to avoid a giant if/elif block
     command_map = {
-        "start": process_manager.start_all,
-        "stop": process_manager.stop_all,
-        "shutdown": process_manager.stop_all, # Foolproof alias
+        "start": lambda: process_manager.start_all(),
+        "stop": lambda: process_manager.stop_all(),
+        "shutdown": lambda: process_manager.stop_all(), # Foolproof alias
         "status": display_status,
         "check-config": process_manager.check_configuration,
         "config": lambda: handle_config_command(args),
         "logs": handle_logs_command,
-        "verbose": lambda: set_console_log_level(not VERBOSE_LOGGING),
         "help": print_help,
         "exit": lambda: True
     }
 
     should_exit = False
-    action = command_map.get(command)
-
-    if action:
-        result = action()
+    if command in command_map:
+        result = command_map[command]()
         if command == "exit" and result is True:
             should_exit = True
+
     elif command == "restart":
         print("Stopping services...")
         process_manager.stop_all()
         time.sleep(2)  # Give services time to shut down completely.
         print("Starting services...")
         process_manager.start_all()
+
     elif command == "export-logs":
         output_file = Path(args[0] if args else "logs_export.xlsx")
         print(f"Exporting logs to '{output_file}'...")
         export_logs_to_excel(config.LOG_DB_PATH, output_file)
+
     else:
         print(f"Unknown command: '{command}'. Type 'help' for a list of commands.")
 
@@ -287,12 +268,11 @@ def print_help():
     """Prints the main help text for the console."""
     print("\nAvailable commands:")
     print("  start                  - Start all application services.")
-    print("  stop                   - Stop all application services gracefully.")
+    print("  stop                   - Stop all application services.")
     print("  restart                - Stop and then restart all services.")
     print("  status                 - Show the current status of all services.")
     print("  logs                   - View historical logs and tail new logs in real-time.")
     print("  export-logs [filename] - Export application logs to a styled Excel file.")
-    print("  verbose                - Toggle verbose (DEBUG) logging to the console.")
     print("  check-config           - Validate paths to external binaries (Nginx, FFmpeg).")
     print("  config <cmd>           - Manage configuration. Use 'config help' for more details.")
     print("  exit                   - Exit the management console.")
@@ -302,8 +282,6 @@ def print_help():
 def main() -> None:
     """The main entry point for the console application."""
     load_current_overrides()
-    # Set the initial log level for the console
-    set_console_log_level(VERBOSE_LOGGING)
 
     # Non-interactive mode for one-off commands
     if len(sys.argv) > 1:
@@ -318,17 +296,10 @@ def main() -> None:
     while True:
         try:
             with CONSOLE_LOCK:
-                # Use a raw input prompt to avoid interfering with logging handlers
-                sys.stdout.write("> ")
-                sys.stdout.flush()
-                command_line_str = sys.stdin.readline()
-                if not command_line_str: # Handles Ctrl+D (EOF)
-                    print("\nExiting console.")
-                    break
-
-            command_line = command_line_str.strip().split()
-            if not command_line:
-                continue
+                command_line_str = input("> ")
+                if not command_line_str:
+                    continue
+                command_line = command_line_str.strip().split()
 
             command, args = command_line[0].lower(), command_line[1:]
 
@@ -341,7 +312,7 @@ def main() -> None:
                 break
         except Exception as e:
             with CONSOLE_LOCK:
-                console_logger.error(f"An unexpected error occurred in the console: {e}", exc_info=True)
+                logger.error(f"An unexpected error occurred in the console: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
