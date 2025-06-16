@@ -1,0 +1,11 @@
+psutil
+python-dotenv
+watchdog
+requests
+PyYAML
+pandas
+openpyxl
+markdown2
+hypercorn
+starlette[full]
+setproctitle
