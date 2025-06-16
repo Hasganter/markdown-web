@@ -1,0 +1,33 @@
+# Python
+__pycache__/*
+venv/*
+*.py[cod]
+*.pyo
+*.pyd
+
+# Website root
+_ROOT-INDEX_/
+
+# temp folder
+temp/*
+
+# Binary folder
+bin/*
+
+# Logs folder
+logs/*
+
+# External Binaries
+external/*
+
+# template folder
+src/templates/*
+
+# database
+*.db
+
+# vs Code
+.vscode/*
+
+# environment variables
+*.env
