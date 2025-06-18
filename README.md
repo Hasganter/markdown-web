@@ -1,6 +1,8 @@
-# MDWeb Project Documentation
+# (VERY MUCH UNSTABLE-ALPHA) MDWeb Project Documentation
 
-This document provides a comprehensive overview of the MDWeb project, a self-contained, process-managed web application framework designed for converting Markdown content into dynamic, full-featured websites.
+This document provides a comprehensive overview of the MDWeb project, a self-contained, process-managed web application framework designed for easily converting Markdown content into dynamic, full-featured websites with custumizable templates.
+
+It provides a way for non-programmers to super easily add a website page on the fly without much of a think. Of course, the templates do need to be setup by a trained admin.
 
 ## Table of Contents
 
