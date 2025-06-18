@@ -163,6 +163,12 @@ if %errorlevel% neq 0 (
 REM Create necessary directories if they don't exist
 if not exist "%PROJECT_DIR%bin" mkdir "%PROJECT_DIR%bin"
 if not exist "%PROJECT_DIR%logs" mkdir "%PROJECT_DIR%logs"
+if not exist "%PROJECT_DIR%_ROOT-INDEX_" mkdir "%PROJECT_DIR%_ROOT-INDEX_"
+if not exist "%PROJECT_DIR%_ROOT-INDEX_\.assets" mkdir "%PROJECT_DIR%_ROOT-INDEX_\.assets"
+if not exist "%PROJECT_DIR%bin\assets" mkdir "%ASSETS_OUTPUT_DIR%bin\assets"
+if not exist "%PROJECT_DIR%src\templates" mkdir "%PROJECT_DIR%src\templates"
+if not exist "%PROJECT_DIR%external" mkdir "%PROJECT_DIR%external"
+
 
 set PYTHONPYCACHEPREFIX=%PROJECT_DIR%bin\__pycache__
 if not exist "%PYTHONPYCACHEPREFIX%" mkdir "%PYTHONPYCACHEPREFIX%"

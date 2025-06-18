@@ -47,11 +47,11 @@ except ImportError:
         finally:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-
 # --- Deferred imports after initial state and functions are defined ---
 from src.local.config import effective_settings as config
 from src.local.database import LogDBManager
 from src.local.manager import ProcessManager
+from src.local.externals import DependencyManager
 from src.log.export import export_logs_to_excel
 from src.log.setup import setup_logging
 
@@ -162,6 +162,21 @@ def handle_config_command(args: List[str]) -> None:
         print("  config help                - Show this help message.")
         print("Use 'check-config' to validate external binary paths.")
 
+def handle_recover_command(args: List[str]):
+    """Handles the 'recover' command for dependencies."""
+    if process_manager.get_pid_info():
+        print("\nERROR: Cannot recover dependencies while the application is running.")
+        print("Please run the 'stop' command first.\n")
+        return
+        
+    if not args:
+        print("Usage: recover <dependency_name>")
+        print(f"Available dependencies: {', '.join(config.EXTERNAL_DEPENDENCIES.keys())}")
+        return
+
+    dep_key = args[0].lower()
+    dep_manager = DependencyManager()
+    dep_manager.interactive_recover(dep_key)
 
 def display_status() -> None:
     """Checks and displays the current status of all managed processes."""
@@ -192,7 +207,6 @@ def display_status() -> None:
         print("\nWARNING: All processes are stopped but a stale PID file exists.")
         print("You should run 'stop' to clean it up before starting again.")
     print("-" * 28 + "\n")
-
 
 def handle_logs_command() -> None:
     """
@@ -232,7 +246,6 @@ def handle_logs_command() -> None:
     except Exception as e:
         logger.error(f"An error occurred during log tailing: {e}", exc_info=True)
 
-
 def toggle_verbose_logging() -> None:
     """Toggles verbose (DEBUG level) logging for the console handler."""
     global VERBOSE_LOGGING
@@ -255,7 +268,6 @@ def toggle_verbose_logging() -> None:
     else:
         print("Could not find console handler to modify level.")
 
-
 def execute_command(command: str, args: List[str]) -> bool:
     """
     Executes a single command from the user.
@@ -264,7 +276,6 @@ def execute_command(command: str, args: List[str]) -> bool:
     :param args: A list of arguments for the command.
     :return bool: True if the console should exit, False otherwise.
     """
-    # Command mapping
     command_map = {
         "start": lambda: process_manager.start_all(VERBOSE_LOGGING),
         "stop": lambda: process_manager.stop_all(),
@@ -274,6 +285,7 @@ def execute_command(command: str, args: List[str]) -> bool:
         "config": lambda: handle_config_command(args),
         "logs": handle_logs_command,
         "verbose": toggle_verbose_logging,
+        "recover": lambda: handle_recover_command(args),
         "help": print_help,
         "exit": lambda: True
     }
@@ -312,6 +324,7 @@ def print_help():
     print("  export-logs [filename] - Export application logs to a styled Excel file.")
     print("  check-config           - Validate paths to external binaries (Nginx, FFmpeg).")
     print("  config <cmd>           - Manage configuration. Use 'config help' for more details.")
+    print("  recover <name>         - Recover an archived version of a dependency (server must be stopped).")
     print("  verbose                - Toggle detailed DEBUG log output in the console.")
     print("  exit                   - Exit the management console.")
     print()
@@ -363,7 +376,6 @@ def main() -> None:
         except Exception as e:
             with CONSOLE_LOCK:
                 logger.error(f"An unexpected error occurred in the console: {e}", exc_info=True)
-
 
 if __name__ == "__main__":
     main()

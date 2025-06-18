@@ -15,6 +15,7 @@ from src.local.app_process import (get_executable_path, get_popen_creation_flags
                                  get_process_args, log_process_output)
 from src.local.config import effective_settings as config
 from src.local.database import LogDBManager, ContentDBManager
+from src.local.externals import DependencyManager
 from src.log.setup import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class ProcessManager:
         """Initializes the ProcessManager state."""
         self.pids_on_disk: Dict[str, int] = {}
         self.running_procs: Dict[str, psutil.Process] = {}
+        self.dependency_manager = DependencyManager()
         self.log_db_manager = LogDBManager(config.LOG_DB_PATH)
         self.content_db_manager = ContentDBManager(config.CONTENT_DB_PATH)
         self.restart_failures: Dict[str, int] = {}
@@ -147,7 +149,7 @@ class ProcessManager:
 
             # --- Nginx Config ---
             # Ensure a clean slate for nginx config in `bin`
-            nginx_bin_conf_dir = config.BIN_DIR / "nginx" / "conf"
+            nginx_bin_conf_dir = config.BIN_DIR / "conf"
             if nginx_bin_conf_dir.exists():
                 shutil.rmtree(nginx_bin_conf_dir)
             shutil.copytree(config.NGINX_SOURCE_PATH / "conf", nginx_bin_conf_dir)
@@ -263,11 +265,22 @@ class ProcessManager:
         # Set up logging with desired verbosity for the startup sequence
         console_level = logging.DEBUG if verbose else logging.INFO
         setup_logging(console_level)
-        
+
         logger.info("=" * 20 + " Application Starting " + "=" * 20)
         self.running_procs.clear()
 
+        # Dependencies check and installation
+        is_first_run = not any(p.is_dir() for p in config.EXTERNAL_DIR.iterdir() if not p.name.startswith('.'))
+        if is_first_run:
+            logger.warning("External dependency directory is empty. Running initial installation...")
+            if not self.dependency_manager.ensure_all_dependencies_installed():
+                logger.critical("Dependency installation failed. Cannot start application.")
+                return False
+            logger.info("Initial dependency installation complete.")
+
+
         try:
+            self.dependency_manager.apply_pending_installs()
             self.write_config_files()
             self.log_db_manager.initialize_database()
 
@@ -304,6 +317,14 @@ class ProcessManager:
 
             self._write_pid_file()
             logger.info("All application processes started successfully.")
+
+            update_thread = threading.Thread(
+                target=self.dependency_manager.check_for_updates_async,
+                daemon=True,
+                name="DepUpdateCheckThread"
+            )
+            update_thread.start()
+            
             return True
         except Exception as e:
             logger.critical(f"Startup failed due to an error: {e}", exc_info=True)
@@ -443,6 +464,33 @@ class ProcessManager:
                 f"Failed to restart '{process_name}'. Cooldown active for {RESTART_COOLDOWN_PERIOD}s."
             )
             return False
+        
+    def _apply_pending_updates(self):
+        """Checks for and applies updates from the .temp_update directory."""
+        temp_update_dir = config.EXTERNAL_DIR / ".temp_update"
+        if not temp_update_dir.is_dir():
+            return
+
+        logger.warning("Pending dependency updates found. Applying now...")
+        for dep_key_dir in temp_update_dir.iterdir():
+            if dep_key_dir.is_dir():
+                dep_key = dep_key_dir.name
+                if dep_key in config.EXTERNAL_DEPENDENCIES:
+                    logger.info(f"Applying update for {dep_key}...")
+                    # 1. Archive current version
+                    self.dependency_manager._archive_current_version(dep_key)
+                    # 2. Move in the new version from temp
+                    new_version_path = temp_update_dir / dep_key / config.EXTERNAL_DEPENDENCIES[dep_key]['target_dir_name']
+                    target_path = config.EXTERNAL_DIR / config.EXTERNAL_DEPENDENCIES[dep_key]['target_dir_name']
+                    try:
+                        shutil.move(str(new_version_path), str(target_path))
+                        logger.info(f"Update for {dep_key} applied successfully.")
+                    except OSError as e:
+                        logger.error(f"Failed to apply update for {dep_key}: {e}")
+
+        # Clean up the temp update directory
+        shutil.rmtree(temp_update_dir)
+        logger.warning("All pending updates applied.")
 
     def supervision_loop(self) -> None:
         """Main supervisor loop that monitors and restarts critical processes."""
