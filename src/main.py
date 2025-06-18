@@ -3,10 +3,18 @@ import logging
 import sys
 import threading
 import time
+import psutil
 from pathlib import Path
 from typing import List
 
-# Set up a basic root logger for early messages before full setup.
+# --- Global State ---
+VERBOSE_LOGGING = False
+stop_log_listener = threading.Event()
+current_overrides: dict = {}
+CONSOLE_LOCK = threading.Lock()
+
+# Basic console logger for messages BEFORE full setup is complete.
+# This logger will be replaced by the full setup later.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)-8s - [console] - %(message)s',
@@ -20,28 +28,35 @@ try:
     def is_keypress_waiting() -> bool:
         return msvcrt.kbhit()
     def clear_keypress_buffer() -> None:
-        msvcrt.getch()
+        # Read all waiting characters to clear the buffer
+        while msvcrt.kbhit():
+            msvcrt.getch()
 except ImportError:
     import select
+    import termios
+    import tty
     def is_keypress_waiting() -> bool:
         return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
     def clear_keypress_buffer() -> None:
-        sys.stdin.read(1)
+        # For non-Windows, need to switch to raw mode temporarily to read without Enter
+        old_settings = termios.tcgetattr(sys.stdin)
+        try:
+            tty.setcbreak(sys.stdin.fileno())
+            while is_keypress_waiting():
+                sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-# --- Defer other imports after initial logging setup ---
-import psutil
 
+# --- Deferred imports after initial state and functions are defined ---
 from src.local.config import effective_settings as config
 from src.local.database import LogDBManager
 from src.local.manager import ProcessManager
 from src.log.export import export_logs_to_excel
+from src.log.setup import setup_logging
 
-# --- Global State ---
-stop_log_listener = threading.Event()
-current_overrides: dict = {}
+# Instantiate managers after imports
 process_manager = ProcessManager()
-CONSOLE_LOCK = threading.Lock()
-
 
 class ListHandler(logging.Handler):
     """A logging handler that collects log records into a list."""
@@ -50,7 +65,6 @@ class ListHandler(logging.Handler):
         self.records: List[str] = []
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append(self.format(record))
-
 
 def load_current_overrides() -> None:
     """
@@ -66,7 +80,6 @@ def load_current_overrides() -> None:
             current_overrides = {}
     else:
         current_overrides = {}
-
 
 def handle_config_command(args: List[str]) -> None:
     """
@@ -163,15 +176,15 @@ def display_status() -> None:
         try:
             if psutil.pid_exists(pid):
                 p = psutil.Process(pid)
-                # For more detail, you can add p.memory_info(), p.cpu_percent()
-                print(f"  - {name:<20} : PID {pid:<8} | Status: {p.status().upper()}")
+                #* For more detail, later add p.memory_info(), p.cpu_percent()
+                print(f"  - {p.name():<25} : PID {pid:<8} | Status: {p.status().upper()}")
                 all_stale = False
             else:
-                print(f"  - {name:<20} : PID {pid:<8} | Status: STOPPED (Stale PID)")
+                print(f"  - {name:<25} : PID {pid:<8} | Status: STOPPED (Stale PID)")
         except psutil.NoSuchProcess:
-            print(f"  - {name:<20} : PID {pid:<8} | Status: STOPPED (Stale PID)")
+            print(f"  - {name:<25} : PID {pid:<8} | Status: STOPPED (Stale PID)")
         except psutil.AccessDenied:
-            print(f"  - {name:<20} : PID {pid:<8} | Status: RUNNING (Access Denied)")
+            print(f"  - {name:<25} : PID {pid:<8} | Status: RUNNING (Access Denied)")
             all_stale = False
 
 
@@ -220,6 +233,29 @@ def handle_logs_command() -> None:
         logger.error(f"An error occurred during log tailing: {e}", exc_info=True)
 
 
+def toggle_verbose_logging() -> None:
+    """Toggles verbose (DEBUG level) logging for the console handler."""
+    global VERBOSE_LOGGING
+    VERBOSE_LOGGING = not VERBOSE_LOGGING
+    new_level = logging.DEBUG if VERBOSE_LOGGING else logging.INFO
+
+    # Reconfigure the console handler's level directly
+    root_logger = logging.getLogger()
+    found_handler = False
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.setLevel(new_level)
+            found_handler = True
+            break
+    
+    status = "ON" if VERBOSE_LOGGING else "OFF"
+    if found_handler:
+        print(f"Verbose console logging is now {status}.")
+        logger.debug("Debug logging test: This message should only appear when verbose is ON.")
+    else:
+        print("Could not find console handler to modify level.")
+
+
 def execute_command(command: str, args: List[str]) -> bool:
     """
     Executes a single command from the user.
@@ -228,15 +264,16 @@ def execute_command(command: str, args: List[str]) -> bool:
     :param args: A list of arguments for the command.
     :return bool: True if the console should exit, False otherwise.
     """
-    # Command mapping to avoid a giant if/elif block
+    # Command mapping
     command_map = {
-        "start": lambda: process_manager.start_all(),
+        "start": lambda: process_manager.start_all(VERBOSE_LOGGING),
         "stop": lambda: process_manager.stop_all(),
         "shutdown": lambda: process_manager.stop_all(), # Foolproof alias
         "status": display_status,
         "check-config": process_manager.check_configuration,
         "config": lambda: handle_config_command(args),
         "logs": handle_logs_command,
+        "verbose": toggle_verbose_logging,
         "help": print_help,
         "exit": lambda: True
     }
@@ -250,9 +287,9 @@ def execute_command(command: str, args: List[str]) -> bool:
     elif command == "restart":
         print("Stopping services...")
         process_manager.stop_all()
-        time.sleep(2)  # Give services time to shut down completely.
+        time.sleep(3)  # Give services time to shut down completely.
         print("Starting services...")
-        process_manager.start_all()
+        process_manager.start_all(VERBOSE_LOGGING)
 
     elif command == "export-logs":
         output_file = Path(args[0] if args else "logs_export.xlsx")
@@ -268,13 +305,14 @@ def print_help():
     """Prints the main help text for the console."""
     print("\nAvailable commands:")
     print("  start                  - Start all application services.")
-    print("  stop                   - Stop all application services.")
+    print("  stop                   - Stop all application services gracefully.")
     print("  restart                - Stop and then restart all services.")
     print("  status                 - Show the current status of all services.")
     print("  logs                   - View historical logs and tail new logs in real-time.")
     print("  export-logs [filename] - Export application logs to a styled Excel file.")
     print("  check-config           - Validate paths to external binaries (Nginx, FFmpeg).")
     print("  config <cmd>           - Manage configuration. Use 'config help' for more details.")
+    print("  verbose                - Toggle detailed DEBUG log output in the console.")
     print("  exit                   - Exit the management console.")
     print()
 
@@ -283,9 +321,20 @@ def main() -> None:
     """The main entry point for the console application."""
     load_current_overrides()
 
+    # The very first thing we do is set up logging for the console.
+    # The 'start' command will call this again for the subprocesses.
+    setup_logging(logging.INFO)
+
     # Non-interactive mode for one-off commands
     if len(sys.argv) > 1:
         command, args = sys.argv[1].lower(), sys.argv[2:]
+        # Check for verbose flag in non-interactive mode
+        if "--verbose" in args:
+            global VERBOSE_LOGGING
+            VERBOSE_LOGGING = True
+            toggle_verbose_logging()
+            args.remove("--verbose")
+        
         execute_command(command, args)
         return
 
@@ -295,16 +344,17 @@ def main() -> None:
 
     while True:
         try:
+            # The input prompt must be outside the lock to not block background threads
+            command_line_str = input("> ")
             with CONSOLE_LOCK:
-                command_line_str = input("> ")
                 if not command_line_str:
                     continue
                 command_line = command_line_str.strip().split()
 
-            command, args = command_line[0].lower(), command_line[1:]
+                command, args = command_line[0].lower(), command_line[1:]
 
-            if execute_command(command, args):
-                break
+                if execute_command(command, args):
+                    break
 
         except KeyboardInterrupt:
             with CONSOLE_LOCK:

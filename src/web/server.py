@@ -1,16 +1,15 @@
 import asyncio
 import logging
-import re
 import sqlite3
 import time
+import setproctitle
 from collections import deque
 from typing import Any, Deque, Dict, Optional, Tuple
 
 # Starlette imports for a native ASGI application
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import (FileResponse, HTMLResponse, PlainTextResponse,
-                                 Response)
+from starlette.responses import (FileResponse, HTMLResponse, PlainTextResponse, Response)
 from starlette.routing import Route
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
@@ -23,7 +22,6 @@ from src.log.setup import setup_logging
 # --- Setup Logging for this Module ---
 setup_logging(console_level=logging.INFO)
 logger = logging.getLogger("asgi_server")
-
 
 # --- Middleware rewritten for Starlette ---
 
@@ -99,6 +97,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "default-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "script-src 'self' 'unsafe-inline'; "
+            f"connect-src 'self' http://{asset_host} https://{asset_host}; "
             f"img-src 'self' data: http://{asset_host} https://{asset_host}; "
             f"media-src 'self' http://{asset_host} https://{asset_host};"
         )
@@ -109,8 +108,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# --- Database and Helper Functions (Largely Unchanged) ---
-
+# --- Database and Helper Functions ---
 async def get_page_data_from_db(path_key: str) -> Optional[Dict[str, Any]]:
     """Asynchronously fetches page data from the database."""
     def db_read_sync() -> Optional[Tuple[str, str, str]]:
@@ -140,7 +138,7 @@ async def get_page_data_from_db(path_key: str) -> Optional[Dict[str, Any]]:
 def get_subdomain_and_path(request: Request) -> Tuple[str, str]:
     """Parses the request to determine the subdomain and web path."""
     host = request.headers.get("host", config.APP_DOMAIN).lower()
-    host = host.removesuffix(config.APP_DOMAIN.lower()).removesuffix(config.APP_DOMAIN.lower().removesuffix(f"{config.NGINX_PORT}"))
+    host = host.removesuffix(config.APP_DOMAIN.lower()).removesuffix(config.APP_DOMAIN.lower().removesuffix(f":{config.NGINX_PORT}"))
     subdomain = "main"
 
     logger.debug(f"Host after removing app domain: {host}")
@@ -193,17 +191,16 @@ async def handle_websocket_connection(websocket: WebSocket) -> None:
 
 
 # --- Main Request Handler ---
-
 async def main_handler(request: Request) -> Response:
     """The main request handler for all incoming HTTP requests."""
     logger.debug(f"Received request: {request.method} {request.url.path} from {request.client.host}")
     domain_part, web_path = get_subdomain_and_path(request)
-    logger.warning(f"Parsed domain part: '{domain_part}', web path: '{web_path}'")
 
     if domain_part == config.ASSETS_SUBDOMAIN_NAME:
         return await handle_asset_request(request)
 
     # Handle WebSocket upgrade requests specifically
+    #TODO: Websockets soon
     if "websocket" in request.headers.get("upgrade", "").lower():
         websocket: WebSocket = await request.websocket()
         await handle_websocket_connection(websocket)
@@ -249,5 +246,8 @@ else:
 
 # The main application object to be loaded by Hypercorn
 app = Starlette(debug=False, routes=routes, middleware=middleware)
+
+# Set the process title when the module is loaded by Hypercorn
+setproctitle.setproctitle("MDWeb - ASGI Server")
 
 logger.info("Starlette ASGI web server worker configured and ready.")

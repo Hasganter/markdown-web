@@ -20,15 +20,25 @@ class LokiHandler(logging.Handler):
         Initializes the Loki handler.
 
         :param url: The base URL of the Loki instance.
+        :param org_id: The tenant ID for Loki (e.g., 'X-Scope-OrgID').
         """
         super().__init__()
-        self.url = f"{url}/loki/api/v1/push"
+        self.url = f"{url.rstrip('/')}/loki/api/v1/push"
         self.org_id = org_id
         self.log_buffer: Deque[Dict[str, Any]] = deque()
         self.buffer_lock = threading.Lock()
         self.flush_interval = config.LOG_BUFFER_FLUSH_INTERVAL
-        self.batch_size = 200 # Flush when buffer reaches this size
-        self.hostname = os.uname().nodename if hasattr(os, 'uname') else 'windows-host'
+        self.batch_size = 200 # Flush when buffer reaches this size (MB)
+        
+        # Get hostname in a cross-platform way
+        self.hostname = os.getenv('COMPUTERNAME') or os.getenv('HOSTNAME')
+        if not self.hostname:
+            try:
+                import socket
+                self.hostname = socket.gethostname()
+            except ImportError:
+                self.hostname = 'unknown-host'
+
         self.stop_event = threading.Event()
         self.flush_thread = threading.Thread(target=self._periodic_flush, daemon=True)
         self.flush_thread.name = "LokiFlushThread"
@@ -41,7 +51,8 @@ class LokiHandler(logging.Handler):
         """
         while not self.stop_event.wait(self.flush_interval):
             self.flush()
-        self.flush() # Final flush on stop
+        # Final flush on stop, ensuring any remaining logs are sent
+        self.flush()
 
     def emit(self, record: logging.LogRecord) -> None:
         """
@@ -51,27 +62,33 @@ class LokiHandler(logging.Handler):
         :param record: The log record to be processed.
         """
         try:
-            msg = record.getMessage()
-        except Exception:
-            msg = "Could not format log message."
+            # For subprocess logs, the message is already the full line.
+            if record.name.startswith('proc.'):
+                msg = record.getMessage()
+                # Try to extract the process name for a better label
+                logger_name = record.name.split('.')[-1]
+            else:
+                msg = self.format(record)
+                logger_name = record.name
 
-        log_entry = {
-            "stream": {
-                "job": "python-app",
-                "level": record.levelname.lower(),
-                "hostname": self.hostname,
-                "logger": record.name,
-                "module": record.module,
-                "function": record.funcName
-            },
-            "values": [
-                [str(int(record.created * 1e9)), msg]
-            ]
-        }
-        with self.buffer_lock:
-            self.log_buffer.append(log_entry)
-            if len(self.log_buffer) >= self.batch_size:
-                self._flush_locked()
+            log_entry = {
+                "stream": {
+                    "job": f"python-app",
+                    "level": record.levelname.lower(),
+                    "hostname": self.hostname,
+                    "logger": logger_name,
+                },
+                "values": [
+                    [str(int(record.created * 1e9)), msg]
+                ]
+            }
+            with self.buffer_lock:
+                self.log_buffer.append(log_entry)
+                # Check buffer size inside the lock to prevent race conditions
+                if len(self.log_buffer) >= self.batch_size:
+                    self._flush_locked()
+        except Exception as e:
+            print(f"ERROR: LokiHandler failed to process a log record: {e}", file=sys.stderr)
 
     def _flush_locked(self) -> None:
         """
@@ -81,23 +98,33 @@ class LokiHandler(logging.Handler):
         if not self.log_buffer:
             return
 
+        # Make a copy of the buffer and clear the original inside the lock
         logs_to_send = list(self.log_buffer)
         self.log_buffer.clear()
         
-        payload = {"streams": logs_to_send}
+        # Release the lock before making a blocking network call
+        self.buffer_lock.release()
         
-        headers = {'Content-Type': 'application/json'}
-        if self.org_id:
-            headers['X-Scope-OrgID'] = self.org_id
-
         try:
-            response = requests.post(self.url, json=payload, headers=headers, timeout=3)
-            response.raise_for_status()
+            payload = {"streams": logs_to_send}
+            headers = {'Content-Type': 'application/json'}
+            if self.org_id:
+                headers['X-Scope-OrgID'] = self.org_id
+
+            response = requests.post(self.url, json=payload, headers=headers, timeout=5)
+            # 204 No Content is the success status for Loki push
+            if response.status_code != 204:
+                # Use a specific logger to avoid recursive loop if Loki handler is on root
+                logging.getLogger("LokiHandler.Internal").error(
+                    f"Loki returned non-204 status: {response.status_code} - {response.text}"
+                )
         except requests.RequestException as e:
-            # If sending fails, we can't log to Loki. Print to stderr as a last resort.
             print(f"CRITICAL: Failed to send {len(logs_to_send)} logs to Loki: {e}", file=sys.stderr)
         except Exception as e:
             print(f"CRITICAL: An unexpected error occurred in LokiHandler flush: {e}", file=sys.stderr)
+        finally:
+            # Re-acquire the lock
+            self.buffer_lock.acquire()
 
     def flush(self) -> None:
         """
@@ -112,7 +139,8 @@ class LokiHandler(logging.Handler):
         """
         self.stop_event.set()
         if self.flush_thread.is_alive():
-            self.flush_thread.join()
+            # Wait for the flush thread to finish its last loop
+            self.flush_thread.join(timeout=self.flush_interval + 2)
         super().close()
 
 
@@ -183,12 +211,23 @@ class SQLiteHandler(logging.Handler):
 
         :param record: The log record to be processed.
         """
+        # For subprocess logs, we need to ensure all required fields exist
+        # even if they are not part of a standard LogRecord.
+        if record.name.startswith('proc.'):
+            module = record.name.split('.')[-1]
+            funcName = 'stdout' if record.levelno == logging.INFO else 'stderr'
+            lineno = 0
+        else:
+            module = record.module
+            funcName = record.funcName
+            lineno = record.lineno
+
         log_entry = {
             "timestamp": record.created,
             "level": record.levelname,
-            "module": record.module,
-            "funcName": record.funcName,
-            "lineno": record.lineno,
+            "module": module,
+            "funcName": funcName,
+            "lineno": lineno,
             "message": record.getMessage()
         }
         with self.buffer_lock:
@@ -205,13 +244,16 @@ class SQLiteHandler(logging.Handler):
         if not self.log_buffer:
             return
 
+        entries_to_write = list(self.log_buffer)
+        self.log_buffer.clear()
+
+        # Release lock before DB operation
+        self.buffer_lock.release()
         conn = None
         try:
             conn = sqlite3.connect(self.db_path, timeout=10)
             cursor = conn.cursor()
-            entries_to_write = list(self.log_buffer)
-            self.log_buffer.clear()
-
+            
             cursor.executemany('''
                 INSERT OR IGNORE INTO logs (timestamp, level, module, funcName, lineno, message)
                 VALUES (:timestamp, :level, :module, :funcName, :lineno, :message)
@@ -219,9 +261,14 @@ class SQLiteHandler(logging.Handler):
             conn.commit()
         except sqlite3.Error as e:
             print(f"Error writing logs to DB: {e}. Log entries: {len(entries_to_write)}")
+            # Optional: Add failed logs back to the buffer for retry
+            # with self.buffer_lock:
+            #     self.log_buffer.extend(entries_to_write)
         finally:
             if conn:
                 conn.close()
+            # Re-acquire lock
+            self.buffer_lock.acquire()
 
     def flush(self) -> None:
         """Public method to trigger a manual flush of the log buffer."""
@@ -236,11 +283,11 @@ class SQLiteHandler(logging.Handler):
 
     def _check_db_file_size(self) -> None:
         """Checks the log database file size and logs a warning if it exceeds the limit."""
-        logger = logging.getLogger(__name__)
+        logger = logging.getLogger(__name__) # Use specific logger to avoid recursion
         try:
-            if not os.path.exists(self.db_path):
+            if not self.db_path.exists():
                 return
-            file_size_bytes = os.path.getsize(self.db_path)
+            file_size_bytes = self.db_path.stat().st_size
             file_size_mb = file_size_bytes / (1024 * 1024)
 
             if file_size_mb > self.max_db_size_mb:
@@ -267,5 +314,6 @@ class SQLiteHandler(logging.Handler):
             self.flush_thread.join()
         if self.db_size_check_thread and self.db_size_check_thread.is_alive():
             self.db_size_check_thread.join()
-        self.flush() # Final flush
+        # Final flush must be called after threads are stopped
+        self.flush()
         super().close()

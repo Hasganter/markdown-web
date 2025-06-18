@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import time
+import setproctitle
 from html import escape
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Lock as LockType
@@ -124,7 +125,7 @@ def process_asset_file(source_path: Path) -> None:
 
     # Define output format based on media type.
     output_map = {'image': '.avif', 'video': '.webm', 'audio': '.mp3'}
-    output_filename = source_path.stem + output_map[media_type]
+    output_filename = source_path.name + output_map[media_type]
     output_path = config.ASSETS_OUTPUT_DIR / output_filename
 
     if output_path.exists() and output_path.stat().st_mtime > source_path.stat().st_mtime:
@@ -193,7 +194,7 @@ def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple
         allowed_methods = cfg.get("ALLOWED_METHODS", ["GET"])
         page_title = escape(context.get("title", path_key.split(":", 1)[1].replace('-', ' ').title() or "Home"))
 
-        # --- Template and Content Conversion ---
+        # Template handling
         template_instance = DefaultTemplate()
         if template_cfg.get("module") and template_cfg.get("class"):
             try:
@@ -228,7 +229,6 @@ def scan_and_process_all_content() -> None:
     if num_processes == 0:
         return
     
-    # Use with statement for ProcessPoolExecutor in the future if applicable
     with Pool(processes=num_processes, initializer=init_worker, initargs=(DB_LOCK,)) as pool:
         results = pool.starmap(process_content_directory, content_dirs)
 
@@ -262,9 +262,9 @@ def scan_and_process_all_assets() -> None:
         return
         
     # Create a mapping of expected output names from source names
-    source_stems = {p.stem for p in source_files}
+    source_names = {p.name for p in source_files}
     for output_file in config.ASSETS_OUTPUT_DIR.iterdir():
-        if output_file.stem not in source_stems:
+        if output_file.stem not in source_names:
             logger.info(f"Deleting orphaned asset '{output_file.name}' as source is missing.")
             output_file.unlink(missing_ok=True)
     logger.info("Full asset scan complete.")
@@ -299,7 +299,7 @@ class ContentChangeHandler(FileSystemEventHandler):
         
         # Asset change
         if relative_path.parts and relative_path.parts[0] == '.assets':
-            return event_path, 'asset' # Special type ID for assets
+            return event_path, 'asset'
 
         # Content change
         dir_to_check = event_path.parent if event_path.is_file() else event_path
@@ -386,6 +386,8 @@ def content_converter_process_loop(stop_event: EventType, lock: LockType) -> Non
                 logger.debug("Periodic rescan initiated by timer...")
                 scan_and_process_all_content()
                 scan_and_process_all_assets()
+        except Exception as e:
+            logger.error(f"Unhandled exception in content processor loop: {e}", exc_info=True)
         finally:
             observer.stop()
             observer.join()
@@ -394,6 +396,7 @@ def content_converter_process_loop(stop_event: EventType, lock: LockType) -> Non
     logger.info("Content processor process shut down.")
 
 if __name__ == "__main__":
+    setproctitle.setproctitle("MDWeb - ContentConverter")
     db_lock = Lock()
     stop_event = Event()
 
