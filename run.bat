@@ -37,11 +37,22 @@ if /i "%~1"=="fresh" (
     set "CLEAR_BIN=1"
     set "END_EARLY=1"
     shift /1
+) else if /i "%~1"=="flog" (
+    REM Clear logs: delete only logs directory
+    echo Clear logs requested. Deleting logs directory...
+    set "CLEAR_LOG=1"
+    shift /1
+) else if /i "%~1"=="fbin" (
+    REM Clear bin: delete only bin directory
+    set "CLEAR_BIN=1"
+    shift /1
 ) else if /i "%~1"=="help" (
     REM Display help message
     echo Usage: run.bat ^[fresh^|clear^|clog^|cbin^] ^[additional console arguments^]
     echo.
     echo fresh: Deletes bin and logs directories before running.
+    echo flog: Deletes only the logs directory before running.
+    echo fbin: Deletes only the bin directory before running.
     echo clear: Deletes bin and logs directories before exitting.
     echo clog: Deletes only the logs directory before exitting.
     echo cbin: Deletes only the bin directory before exitting.
