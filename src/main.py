@@ -1,6 +1,7 @@
 import json
 import logging
 import sys
+import os
 import threading
 import time
 import psutil
@@ -179,7 +180,7 @@ def handle_recover_command(args: List[str]):
     dep_manager.interactive_recover(dep_key)
 
 def display_status() -> None:
-    """Checks and displays the current status of all managed processes."""
+    """Checks and displays the current status of all managed processes, including resource usage."""
     pids = process_manager.get_pid_info()
     if not pids:
         print("\nApplication is STOPPED (No PID file found).\n")
@@ -187,12 +188,34 @@ def display_status() -> None:
 
     print("\n--- Application Status ---")
     all_stale = True
+    total_cpu = 0.0
+    total_mem = 0
+    seen_pids = set()
+
+    # Add current process (the console itself)
+    current_pid = os.getpid()
+    try:
+        p = psutil.Process(current_pid)
+        cpu = p.cpu_percent(interval=0.1)
+        mem = p.memory_info().rss
+        total_cpu += cpu
+        total_mem += mem
+        seen_pids.add(current_pid)
+        print(f"  - {p.name() + " (console)":<30} : PID {current_pid:<8} | Status: {p.status().upper()} | CPU: {cpu:.1f}% | MEM: {mem/1024/1024:.1f} MB")
+    except Exception:
+        pass
+
     for name, pid in sorted(pids.items()):
+        if pid in seen_pids:
+            continue  # Already counted
         try:
             if psutil.pid_exists(pid):
                 p = psutil.Process(pid)
-                #* For more detail, later add p.memory_info(), p.cpu_percent()
-                print(f"  - {p.name():<25} : PID {pid:<8} | Status: {p.status().upper()}")
+                cpu = p.cpu_percent(interval=0.1)
+                mem = p.memory_info().rss
+                print(f"  - {p.name() + ' (' + name + ')':<30} : PID {pid:<8} | Status: {p.status().upper()} | CPU: {cpu:.1f}% | MEM: {mem/1024/1024:.1f} MB")
+                total_cpu += cpu
+                total_mem += mem
                 all_stale = False
             else:
                 print(f"  - {name:<25} : PID {pid:<8} | Status: STOPPED (Stale PID)")
@@ -202,11 +225,12 @@ def display_status() -> None:
             print(f"  - {name:<25} : PID {pid:<8} | Status: RUNNING (Access Denied)")
             all_stale = False
 
+    print(f"\nTOTAL CPU: {total_cpu:.1f}%  |  TOTAL MEMORY: {total_mem/1024/1024:.1f} MB")
 
     if all_stale:
         print("\nWARNING: All processes are stopped but a stale PID file exists.")
         print("You should run 'stop' to clean it up before starting again.")
-    print("-" * 28 + "\n")
+    print("-" * 26 + "\n")
 
 def handle_logs_command() -> None:
     """
@@ -304,7 +328,7 @@ def execute_command(command: str, args: List[str]) -> bool:
         process_manager.start_all(VERBOSE_LOGGING)
 
     elif command == "export-logs":
-        output_file = Path(args[0] if args else "logs_export.xlsx")
+        output_file = Path(args[0] if args else config.LOGS_DIR / "logs_export.xlsx")
         print(f"Exporting logs to '{output_file}'...")
         export_logs_to_excel(config.LOG_DB_PATH, output_file)
 

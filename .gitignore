@@ -31,3 +31,6 @@ src/templates/*
 
 # environment variables
 *.env
+
+# exported xlsx
+*.xlsx
