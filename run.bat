@@ -116,20 +116,20 @@ if not exist "%PROJECT_DIR%.env" (
         echo #  Hypercorn ASGI Server Settings ^(The Python application server^)
         echo ASGI_PORT="8000"
         echo # Number of worker processes or threads. 0 = ^(2 * cpu_cores^) + 1.
-        echo ASGI_WORKERS="0"
+        echo ASGI_WORKERS="1"
         echo.
         echo #  Ngrok Tunneling ^(optional^)
         echo NGROK_ENABLED="False"
         echo NGROK_AUTHTOKEN=""
         echo.
         echo #  Grafana Loki Observability ^(optional^)
-        echo LOKI_ENABLED="True"
+        echo LOKI_ENABLED="False"
         echo LOKI_URL="http://localhost:3100"
         echo # Loki tenant ID, required by many installations. "fake" is a common default.
         echo LOKI_ORG_ID="fake"
         echo.
         echo #  DDoS Protection ^(Handled by Nginx^)
-        echo DDOS_PROTECTION_ENABLED="True"
+        echo DDOS_PROTECTION_ENABLED="False"
     ) > "%PROJECT_DIR%.env"
     echo Default .env file created. Please review it before running in production.
     echo.
