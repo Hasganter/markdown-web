@@ -195,12 +195,17 @@ http {{
         root "{assets_output_dir}";
 
         location / {{
-            # Tries to serve the requested file ($uri) from the 'root' directory.
-            # If the file doesn't exist, it falls back to the @asset_fallback location.
-            # This is the key change for correct asset serving.
-            try_files $uri @asset_fallback;
+            # Tries to serve the requested file with various web-optimized extensions first.
+            # $uri is the request path, e.g., /background.jpg
+            # Nginx will check for existence in this order:
+            # 1. /background.jpg (for non-media assets like CSS that are copied directly)
+            # 2. /background.jpg.avif (for converted images)
+            # 3. /background.jpg.webm (for converted videos)
+            # 4. /background.jpg.mp3 (for converted audio)
+            # If none are found, it falls back to the Python app.
+            try_files $uri $uri.avif $uri.webm $uri.mp3 @asset_fallback;
         }}
-        
+
         # This named location is the fallback for assets not found in the root.
         # It proxies the request to the Python app with a special query parameter,
         # asking for the *original* unconverted file.
@@ -220,14 +225,14 @@ http {{
         server_name {server_name};
 
         limit_req zone=global_limit burst={burst} nodelay;
-        
+
         location / {{
             proxy_pass http://{asgi_host}:{asgi_port};
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
-            
+
             # Required headers for WebSocket support.
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;

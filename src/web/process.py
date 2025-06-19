@@ -2,6 +2,7 @@ import hashlib
 import importlib
 import logging
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -109,21 +110,28 @@ def get_media_type(file_path: Path) -> Optional[str]:
 
 def process_asset_file(source_path: Path) -> None:
     """
-    Converts a single media asset file to a web-optimized format using FFmpeg.
+    Processes a single asset file. It converts recognized media types to a
+    web-optimized format using FFmpeg and copies all other file types directly.
+    This function is idempotent, skipping operations if the output is up-to-date.
 
-    This function is idempotent and skips conversion if the output is up-to-date.
-
-    :param source_path: The path to the source media file.
+    :param source_path: The path to the source asset file.
     """
     if not source_path.is_file():
         return
 
     media_type = get_media_type(source_path)
     if not media_type:
-        logger.debug(f"Skipping non-media file: {source_path.name}")
+        # This is a non-media file (like CSS, JS) that should be copied directly.
+        output_path = config.ASSETS_OUTPUT_DIR / source_path.name
+        # Check if the destination is older than the source before copying.
+        if not output_path.exists() or output_path.stat().st_mtime < source_path.stat().st_mtime:
+            logger.info(f"Copying static asset '{source_path.name}' to output directory.")
+            shutil.copy2(source_path, output_path)  # copy2 preserves metadata
+        else:
+            logger.debug(f"Static asset '{output_path.name}' is up-to-date. Skipping copy.")
         return
 
-    # Define output format based on media type.
+    # --- Media Conversion Logic ---
     output_map = {'image': '.avif', 'video': '.webm', 'audio': '.mp3'}
     output_filename = source_path.name + output_map[media_type]
     output_path = config.ASSETS_OUTPUT_DIR / output_filename
