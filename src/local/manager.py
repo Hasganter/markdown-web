@@ -4,9 +4,11 @@ import shutil
 import socket
 import subprocess
 import sys
+import os
 import threading
 import time
 from typing import Dict, Optional, Set
+from pathlib import Path
 from multiprocessing import Lock
 from src.web.process import scan_and_process_all_content, scan_and_process_all_assets, init_worker as init_content_worker
 import psutil
@@ -48,14 +50,40 @@ class ProcessManager:
         self.restart_failures: Dict[str, int] = {}
         self.restart_cooldown_timers: Dict[str, float] = {}
         self.shutdown_signal_received = threading.Event()
+        self.stop_tailing_event = threading.Event()
 
-    def _handle_nginx_log_line(self, line: str) -> None:
+    def _tail_nginx_log_file(self, log_path: Path):
         """
-        Parses a JSON log line from Nginx and inserts it into the database.
-
-        :param line: The raw JSON string from Nginx's stdout.
+        Tails the Nginx access log file and processes new lines.
+        This runs in a dedicated background thread until stop_tailing_event is set.
         """
-        self.log_db_manager.insert_nginx_log(line)
+        logger.info(f"Starting to tail Nginx access log at: {log_path}")
+        
+        # Wait for Nginx to start and create the log file
+        for _ in range(5): # Wait up to 5 seconds
+            if log_path.exists():
+                break
+            time.sleep(1)
+        
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                # Go to the end of the file to only read new lines
+                f.seek(0, os.SEEK_END)
+                while not self.stop_tailing_event.is_set():
+                    line = f.readline()
+                    if not line:
+                        time.sleep(0.2)  # Sleep briefly when there are no new lines
+                        continue
+                    # Pass the stripped line to the DB manager
+                    self.log_db_manager.insert_nginx_log(line.strip())
+        except FileNotFoundError:
+            if not self.shutdown_signal_received.is_set():
+                logger.error(f"Nginx log file not found at {log_path}. Tailing failed. Nginx might not have started correctly.")
+        except Exception as e:
+            if not self.shutdown_signal_received.is_set():
+                logger.error(f"Error while tailing Nginx log file: {e}", exc_info=True)
+        
+        logger.info("Nginx log tailing thread has stopped.")
 
     def check_configuration(self) -> bool:
         """
@@ -222,9 +250,7 @@ class ProcessManager:
                 cwd=str(cwd.resolve()),
                 **popen_kwargs
             )
-            # Pass name to the log output function to fix double-formatting
-            line_handler = self._handle_nginx_log_line if name == "nginx" else None
-            log_process_output(p, name, line_handler)
+            log_process_output(p, name, line_handler=None)
 
             # Store the psutil.Process object for supervision.
             self.running_procs[name] = psutil.Process(p.pid)
@@ -315,6 +341,18 @@ class ProcessManager:
                     if not self._wait_for_asgi_server():
                         raise RuntimeError("ASGI server health check failed.")
 
+                # After Nginx starts, launch the thread to tail its access log file.
+                if name == "nginx":
+                    nginx_log_path = config.BIN_DIR / "logs" / "access.log"
+                    self.stop_tailing_event.clear() # Reset event for this run
+                    tail_thread = threading.Thread(
+                        target=self._tail_nginx_log_file,
+                        args=(nginx_log_path,),
+                        daemon=True,
+                        name="NginxLogTailerThread"
+                    )
+                    tail_thread.start()
+
             self._write_pid_file()
             logger.info("All application processes started successfully.")
 
@@ -337,6 +375,7 @@ class ProcessManager:
     
         :param is_cleanup_after_failure: If True, uses internal state instead of PID file.
         """
+        self.stop_tailing_event.set()
         self.shutdown_signal_received.set()
         config.SHUTDOWN_SIGNAL_PATH.touch()
     

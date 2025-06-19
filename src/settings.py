@@ -178,8 +178,11 @@ http {{
         '"http_x_forwarded_for": "$http_x_forwarded_for"'
     '}}';
 
-    # Send access and error logs to stdout/stderr to be captured by the ProcessManager.
-    access_log stdout loki_json;
+    # Send access logs to a file for reliable tailing by the manager and Alloy.
+    # The path is relative to the Nginx prefix directory ('bin/').
+    access_log logs/access.log loki_json;
+
+    # Send error logs to stderr to be captured immediately by the ProcessManager.
     error_log stderr error;
 
     # SERVER 1: Assets Subdomain (assets.domain.com)
