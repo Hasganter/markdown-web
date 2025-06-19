@@ -201,7 +201,7 @@ def display_status() -> None:
         total_cpu += cpu
         total_mem += mem
         seen_pids.add(current_pid)
-        print(f"  - {p.name() + " (console)":<30} : PID {current_pid:<8} | Status: {p.status().upper()} | CPU: {cpu:.1f}% | MEM: {mem/1024/1024:.1f} MB")
+        print(f"  - {p.name() + " (console)":<32} : PID {current_pid:<8} | Status: {p.status().upper()} | CPU: {cpu:.1f}% | MEM: {mem/1024/1024:.1f} MB")
     except Exception:
         pass
 
@@ -213,7 +213,7 @@ def display_status() -> None:
                 p = psutil.Process(pid)
                 cpu = p.cpu_percent(interval=0.1)
                 mem = p.memory_info().rss
-                print(f"  - {p.name() + ' (' + name + ')':<30} : PID {pid:<8} | Status: {p.status().upper()} | CPU: {cpu:.1f}% | MEM: {mem/1024/1024:.1f} MB")
+                print(f"  - {p.name() + ' (' + name + ')':<32} : PID {pid:<8} | Status: {p.status().upper()} | CPU: {cpu:.1f}% | MEM: {mem/1024/1024:.1f} MB")
                 total_cpu += cpu
                 total_mem += mem
                 all_stale = False
