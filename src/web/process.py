@@ -54,7 +54,7 @@ def parse_source_with_yaml_header(source_content: str) -> Tuple[str, Dict[str, A
     """
     Parses a source file's content, separating YAML front matter from the body.
 
-    The YAML block, enclosed in '---', is safely parsed to extract context
+    The YAML block, enclosed in '~~~', is safely parsed to extract context
     variables, template settings, and allowed HTTP methods.
 
     :param source_content: The full string content of the source file.
@@ -68,7 +68,7 @@ def parse_source_with_yaml_header(source_content: str) -> Tuple[str, Dict[str, A
     body_content = source_content
 
     # Regex to find a YAML front matter block.
-    match = re.match(r"^\s*---\s*\n(.*?)\n---\s*\n(.*)", source_content, re.DOTALL)
+    match = re.match(r"^\s*~~~\s*\n(.*?)\n~~~\s*\n(.*)", source_content, re.DOTALL)
     if not match:
         return body_content, config_data
 
