@@ -6,13 +6,14 @@ It provides a way for non-programmers to super easily add a website page on the 
 
 ## Table of Contents
 
-- [MDWeb Project Documentation](#mdweb-project-documentation)
+- [(VERY MUCH UNSTABLE-ALPHA) MDWeb Project Documentation](#very-much-unstable-alpha-mdweb-project-documentation)
   - [Table of Contents](#table-of-contents)
   - [1. Overview](#1-overview)
     - [What is MDWeb?](#what-is-mdweb)
     - [Key Features](#key-features)
   - [2. Core Concepts \& Architecture](#2-core-concepts--architecture)
     - [System Architecture Diagram](#system-architecture-diagram)
+    - [System Startup Diagram](#system-startup-diagram)
     - [The Process Supervisor Model](#the-process-supervisor-model)
     - [The Content Pipeline](#the-content-pipeline)
     - [Automated Dependency Management](#automated-dependency-management)
@@ -77,67 +78,272 @@ Understanding the architecture is key to leveraging the full power of MDWeb. The
 ### System Architecture Diagram
 
 ```mermaid
-graph TD
-    subgraph User Interaction
+---
+config:
+  layout: elk
+  elk:
+    nodePlacementStrategy: BRANDES_KOEPF
+---
+
+graph LR
+    %% USER INTERACTION
+    subgraph "👤 User"
         User[End User]
     end
 
-    subgraph "External/Public-Facing"
-        Nginx[Nginx Reverse Proxy]
+    %% EXTERNAL
+    subgraph "🌐 Public-Facing"
+        Nginx[Nginx<br>Reverse Proxy]
     end
 
-    subgraph "Internal Application Suite"
-        subgraph "Web Serving"
-            ASGI[Starlette/Hypercorn ASGI Server]
+    %% INTERNAL
+    subgraph "🧩 Internal Suite"
+        subgraph "📡 Web Server"
+            ASGI["ASGI Server<br>(Starlette/Hypercorn)"]
         end
-        subgraph "Content Processing"
-            ContentConverter[Content Converter Process]
-            Watchdog[Watchdog Monitor]
+
+        subgraph "🛠️ Content Processing"
+            Watchdog["Watchdog<br>(Monitors Files)"]
+            ContentConverter["Content Converter<br>(Markdown, HTML, Media)"]
         end
-        subgraph "Orchestration"
-            Supervisor[Supervisor Process]
+
+        subgraph "🎛️ Orchestration"
+            Supervisor["Supervisor<br>(Manages Services)"]
         end
     end
-    
-    subgraph "Data & Filesystem"
-        ContentDB[(content.db<br>SQLite)]
-        LogDB[(app_logs.db<br>SQLite)]
+
+    %% STORAGE
+    subgraph "🗂️ Files & DB"
         SourceFiles[/_ROOT-INDEX_/]
-        Assets[/_ROOT-INDEX_/.assets]
-        BinDir[/bin/assets/]
+        Assets["/_ROOT-INDEX_/.assets"]
+        BinDir["/bin/assets/<br>Optimized Media"]
+        ContentDB[(content.db)]
+        LogDB[(app_logs.db)]
     end
-    
-    subgraph "Observability"
-        Loki[Grafana Loki]
-        Alloy[Grafana Alloy]
-    end
-    
-    User -- HTTPS Request --> Nginx
-    Nginx -- Serves Optimized Assets --> BinDir
-    Nginx -- Proxies Request --> ASGI
-    
-    ASGI -- Reads HTML --> ContentDB
-    
-    Watchdog -- Watches --> SourceFiles
-    Watchdog -- Watches --> Assets
-    Watchdog -- Notifies --> ContentConverter
-    
-    ContentConverter -- Processes Markdown/HTML --> ContentDB
-    ContentConverter -- Processes Media w/ FFmpeg --> BinDir
-    
-    Supervisor -- Manages & Restarts --> Nginx
-    Supervisor -- Manages & Restarts --> ASGI
-    Supervisor -- Manages & Restarts --> ContentConverter
-    Supervisor -- Manages & Restarts --> Loki
-    Supervisor -- Manages & Restarts --> Alloy
-    
-    Nginx -- Logs to stdout --> Supervisor
-    ASGI -- Logs to stdout --> Supervisor
-    ContentConverter -- Logs to stdout --> Supervisor
-    
-    Supervisor -- Captures all logs --> LogDB
-    Supervisor -- Forwards logs via Alloy --> Loki
 
+    %% Logging
+    subgraph "📈 Logging"
+        Alloy["Grafana Alloy"]
+        Loki["Grafana Loki"]
+    end
+
+    %% FLOW
+    User -->|HTTPS Request| Nginx
+    Nginx -->|Static Assets| BinDir
+    Nginx -->|Proxy Request| ASGI
+    ASGI -->|Reads HTML| ContentDB
+
+    Watchdog -->|Watches| SourceFiles
+    Watchdog -->|Watches| Assets
+    Watchdog -->|Triggers| ContentConverter
+    ContentConverter -->|Updates| ContentDB
+    ContentConverter -->|Optimizes Media| BinDir
+
+    Supervisor -->|Manages| Nginx
+    Supervisor -->|Manages| ASGI
+    Supervisor -->|Manages| ContentConverter
+    Supervisor -->|Manages| Loki
+    Supervisor -->|Manages| Alloy
+
+    Nginx -->|stdout| Supervisor
+    ASGI -->|stdout| Supervisor
+    ContentConverter -->|stdout| Supervisor
+    Supervisor -->|Stores Logs| LogDB
+    Supervisor -->|Sends Logs| Alloy
+    Alloy -->|Pushes Logs| Loki
+
+    %% STYLING
+    classDef userClass fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef publicClass fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef webServerClass fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef contentClass fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef orchestrationClass fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+    classDef storageClass fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    classDef loggingClass fill:#e8eaf6,stroke:#1a237e,stroke-width:2px
+
+    class User userClass
+    class Nginx publicClass
+    class ASGI webServerClass
+    class Watchdog,ContentConverter contentClass
+    class Supervisor orchestrationClass
+    class SourceFiles,Assets,BinDir,ContentDB,LogDB storageClass
+    class Alloy,Loki loggingClass
+```
+
+### System Startup Diagram
+
+```mermaid
+---
+config:
+  layout: elk
+  elk:
+    nodePlacementStrategy: BRANDES_KOEPF
+---
+
+graph TD
+    %% USER INTERACTION
+    subgraph "👤 User Interaction"
+        User[User runs run.bat]
+        UserArgs{{"Arguments provided?"}}
+        UserFresh["run.bat fresh"]
+        UserClear["run.bat clear"]
+        UserHelp["run.bat help"]
+        UserNormal["run.bat (no args)"]
+    end
+
+    %% BATCH SCRIPT PROCESSING
+    subgraph "🏗️ Environment Setup (run.bat)"
+        CheckPython["Check Python Installation"]
+        CreateEnv["Create .env if missing"]
+        CreateVenv["Create/Activate venv"]
+        InstallDeps["Install requirements.txt"]
+        CreateDirs["Create necessary directories"]
+        SetPyCache["Set PYTHONPYCACHEPREFIX"]
+    end
+
+    %% PYTHON APPLICATION ENTRY
+    subgraph "🐍 Python Entry Point (main.py)"
+        LoadConfig["Load Configuration Hierarchy"]
+        SetupBasicLog["Setup Basic Console Logging"]
+        CheckMode{{"Interactive or<br>Command Mode?"}}
+        OneOffCmd["Execute Single Command"]
+        InteractiveConsole["Interactive Management Console"]
+    end
+
+    %% DEPENDENCY MANAGEMENT
+    subgraph "📦 Dependency Management"
+        FirstRun{{"First Run?"}}
+        DownloadExternal["Download External Dependencies<br>(Nginx, FFmpeg, Grafana tools)"]
+        ApplyPending["Apply Pending Updates"]
+        WriteConfigs["Write Configuration Files<br>(nginx.conf, alloy config)"]
+    end
+
+    %% DATABASE INITIALIZATION
+    subgraph "🗄️ Database Setup"
+        InitLogDB["Initialize Log Database<br>(app_logs.db)"]
+        InitContentDB["Initialize Content Database<br>(content.db)"]
+        ScanContent["Initial Content Scan<br>(Blocking)"]
+        ScanAssets["Initial Asset Processing<br>(Blocking)"]
+    end
+
+    %% PROCESS LAUNCHING
+    subgraph "🚀 Process Launch Sequence"
+        LaunchLoki["Launch Grafana Loki<br>(if enabled)"]
+        LaunchAlloy["Launch Grafana Alloy<br>(if enabled)"]
+        LaunchConverter["Launch Content Converter<br>(Background file watcher)"]
+        LaunchASGI["Launch ASGI Server<br>(Hypercorn/Starlette)"]
+        HealthCheck["ASGI Health Check"]
+        LaunchNgrok["Launch Ngrok<br>(if enabled)"]
+        LaunchNginx["Launch Nginx<br>(Reverse Proxy)"]
+        StartLogTailing["Start Nginx Log Tailing Thread"]
+        LaunchSupervisor["Launch Supervisor Process<br>(Detached)"]
+    end
+
+    %% SUPERVISOR OPERATIONS
+    subgraph "🎛️ Supervisor Process"
+        SupervisorStart["Supervisor Detaches from Console"]
+        MonitorLoop["Monitor Critical Processes<br>(nginx, asgi_server, content_converter)"]
+        RestartLogic["Auto-restart Failed Processes<br>(with cooldown & attempt limits)"]
+    end
+
+    %% RUNTIME OPERATIONS
+    subgraph "⚡ Runtime Operations"
+        ServeRequests["Serve User Requests"]
+        WatchFiles["Watch _ROOT-INDEX_ for Changes"]
+        ProcessMedia["Auto-process Media Files"]
+        LogAggregation["Aggregate Logs to Grafana"]
+        UpdateCheck["Background Dependency Updates"]
+    end
+
+    %% FINAL STATES
+    subgraph "✅ Final States"
+        AppRunning["Application Running<br>& Supervised"]
+        ConsoleReady["Management Console Ready"]
+        ExitEarly["Exit Without Starting<br>(help, clear commands)"]
+    end
+
+    %% FLOW CONNECTIONS
+    User --> UserArgs
+    UserArgs -->|fresh| UserFresh
+    UserArgs -->|clear/clog/cbin| UserClear
+    UserArgs -->|help| UserHelp
+    UserArgs -->|no args or other| UserNormal
+
+    UserFresh --> CheckPython
+    UserClear --> ExitEarly
+    UserHelp --> ExitEarly
+    UserNormal --> CheckPython
+
+    CheckPython --> CreateEnv
+    CreateEnv --> CreateVenv
+    CreateVenv --> InstallDeps
+    InstallDeps --> CreateDirs
+    CreateDirs --> SetPyCache
+    SetPyCache --> LoadConfig
+
+    LoadConfig --> SetupBasicLog
+    SetupBasicLog --> CheckMode
+    CheckMode -->|Command| OneOffCmd
+    CheckMode -->|Interactive| InteractiveConsole
+
+    %% Start Command Flow
+    OneOffCmd -.->|start command| FirstRun
+    InteractiveConsole -.->|start command| FirstRun
+
+    FirstRun -->|Yes| DownloadExternal
+    FirstRun -->|No| ApplyPending
+    DownloadExternal --> ApplyPending
+    ApplyPending --> WriteConfigs
+    WriteConfigs --> InitLogDB
+
+    InitLogDB --> InitContentDB
+    InitContentDB --> ScanContent
+    ScanContent --> ScanAssets
+    ScanAssets --> LaunchLoki
+
+    LaunchLoki --> LaunchAlloy
+    LaunchAlloy --> LaunchConverter
+    LaunchConverter --> LaunchASGI
+    LaunchASGI --> HealthCheck
+    HealthCheck --> LaunchNgrok
+    LaunchNgrok --> LaunchNginx
+    LaunchNginx --> StartLogTailing
+    StartLogTailing --> LaunchSupervisor
+
+    LaunchSupervisor --> SupervisorStart
+    SupervisorStart --> MonitorLoop
+    MonitorLoop --> RestartLogic
+    RestartLogic --> MonitorLoop
+
+    LaunchSupervisor --> AppRunning
+    AppRunning --> ServeRequests
+    AppRunning --> WatchFiles
+    AppRunning --> ProcessMedia
+    AppRunning --> LogAggregation
+    AppRunning --> UpdateCheck
+
+    InteractiveConsole --> ConsoleReady
+
+    %% STYLING
+    classDef userClass fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef batchClass fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef pythonClass fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef depClass fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef dbClass fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    classDef processClass fill:#e0f2f1,stroke:#004d40,stroke-width:2px
+    classDef supervisorClass fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+    classDef runtimeClass fill:#e8eaf6,stroke:#1a237e,stroke-width:2px
+    classDef finalClass fill:#ffebee,stroke:#b71c1c,stroke-width:2px
+
+    class User,UserArgs,UserFresh,UserClear,UserHelp,UserNormal userClass
+    class CheckPython,CreateEnv,CreateVenv,InstallDeps,CreateDirs,SetPyCache batchClass
+    class LoadConfig,SetupBasicLog,CheckMode,OneOffCmd,InteractiveConsole pythonClass
+    class FirstRun,DownloadExternal,ApplyPending,WriteConfigs depClass
+    class InitLogDB,InitContentDB,ScanContent,ScanAssets dbClass
+    class LaunchLoki,LaunchAlloy,LaunchConverter,LaunchASGI,HealthCheck,LaunchNgrok,LaunchNginx,StartLogTailing,LaunchSupervisor processClass
+    class SupervisorStart,MonitorLoop,RestartLogic supervisorClass
+    class ServeRequests,WatchFiles,ProcessMedia,LogAggregation,UpdateCheck runtimeClass
+    class AppRunning,ConsoleReady,ExitEarly finalClass
 ```
 
 ### The Process Supervisor Model
@@ -481,35 +687,40 @@ For offline analysis or reporting, the `export-logs [filename]` command queries 
 
 | Path | Purpose |
 | :--- | :--- |
-| `bin/` | **Generated/Runtime Data.** Contains compiled configs, databases, PID files, and optimized assets. Should be in `.gitignore`. |
-| `external/` | **Managed Dependencies.** Nginx, FFmpeg, etc. are downloaded and stored here. |
-| `logs/` | **Application Logs.** Contains the `app_logs.db` SQLite database. |
-| `src/` | **Source Code.** The core Python application logic. |
-| `_ROOT-INDEX_/` | **Content Source.** All user-created Markdown, HTML, and media files. |
-| `venv/` | The Python virtual environment. |
-| `run.bat` | The main entrypoint script for setup and execution. |
+| `bin/` | **Generated/Runtime Data.** Contains compiled configs, databases, PID files, and optimized assets. Auto-created by the application. Should be in `.gitignore`. |
+| `external/` | **Managed Dependencies.** External binaries like Nginx, FFmpeg, Grafana Loki, and Grafana Alloy are automatically downloaded and stored here. |
+| `logs/` | **Application Logs.** Contains the `app_logs.db` SQLite database for structured logging. |
+| `src/` | **Source Code.** The core Python application logic organized into logical modules. |
+| `_ROOT-INDEX_/` | **Content Source.** All user-created Markdown, HTML, and media files. The directory structure maps directly to URL paths. |
+| `temp/` | **Temporary Files.** Working directory for file processing and temporary assets. |
+| `tests/` | **Test Suite.** Unit and integration tests for the application. |
+| `venv/` | **Python Virtual Environment.** Isolated Python environment with all dependencies. |
+| `.env` | **Environment Configuration.** User-configurable settings like ports, domains, and feature flags. |
+| `reqs.txt` | **Python Dependencies.** All required Python packages for the application. |
+| `run.bat` | **Main Entry Point.** Intelligent bootstrapper that handles setup, virtual environment creation, and application management. |
 
 ### Module Breakdown (`src/`)
 
-*   `main.py`: The entry point for the command-line interface (CLI). Parses arguments and dispatches commands.
-*   `settings.py`: The base configuration file. Defines all default values, file paths, and configuration templates.
+*   **Core Entry Points**
+    *   `main.py`: The command-line interface (CLI) and interactive management console. Handles command parsing, argument dispatch, and provides real-time log tailing with console management.
+    *   `settings.py`: The comprehensive configuration file. Defines default values, file paths, external dependency configurations, and configuration templates for Nginx and Hypercorn.
 
 *   **`src/local/` - Process & System Management**
-    *   `manager.py` (`ProcessManager`): The heart of the application. Manages the lifecycle (start, stop, supervise) of all subprocesses. Orchestrates configuration writing and initial content scans.
-    *   `supervisor_entry.py`: A minimal script that serves as the entry point for the detached supervisor process.
-    *   `app_process.py`: Utility functions for creating and managing subprocesses, including platform-specific flags and capturing log output.
-    *   `config.py` (`MergedSettings`): Implements the layered configuration logic, merging `settings.py`, `.env`, and `overrides.json`.
-    *   `database.py` (`LogDBManager`, `ContentDBManager`): A data access layer providing an API for all SQLite database interactions.
-    *   `externals.py` (`DependencyManager`): Handles the download, installation, update, and recovery of external binaries.
+    *   `manager.py` (`ProcessManager`): The application's orchestration hub. Manages the complete lifecycle (start, stop, supervise, restart) of all subprocesses including Nginx, Hypercorn ASGI server, content converter, and optional services like Loki and Ngrok. Handles graceful shutdowns, health checks, and automatic recovery.
+    *   `supervisor_entry.py`: A lightweight detached supervisor process that monitors critical processes and provides automatic restart capabilities with cooldown periods and attempt limits.
+    *   `app_process.py`: Cross-platform utilities for subprocess creation and management, including platform-specific process flags, log output capture, and executable path resolution.
+    *   `config.py`: Implements the hierarchical configuration system that merges `settings.py` defaults, `.env` overrides, and runtime `overrides.json` modifications with proper precedence handling.
+    *   `database.py` (`LogDBManager`, `ContentDBManager`): Thread-safe data access layer for SQLite operations. Provides APIs for log storage/retrieval and content database management with WAL mode support for concurrent access.
+    *   `externals.py` (`DependencyManager`): Automated dependency management system that handles download, installation, version checking, updates, and recovery of external binaries from GitHub releases and other sources.
 
-*   **`src/web/` - Web-Facing Logic**
-    *   `server.py`: The Starlette ASGI application. Handles incoming HTTP requests, retrieves content from the database, and serves responses. Contains security and rate-limiting middleware.
-    *   `process.py`: The content conversion logic. Contains the `watchdog` event handler, functions for parsing files, processing media with FFmpeg, and the main loop for the `content_converter` process.
+*   **`src/web/` - Web Application Logic**
+    *   `server.py`: Production-ready Starlette ASGI application with comprehensive middleware stack including DDoS protection, security headers, rate limiting, and asset serving. Handles HTTP requests, database queries, and response generation.
+    *   `process.py`: Real-time content processing engine using `watchdog` for filesystem monitoring. Implements multiprocessing pools for parallel content conversion, FFmpeg media optimization, YAML front-matter parsing, and template rendering.
 
-*   **`src/log/` - Logging Infrastructure**
-    *   `setup.py`: A single function `setup_logging` that configures the entire logging system for the application.
-    *   `handler.py` (`SQLiteHandler`, `LokiHandler`): Custom, thread-safe, batch-processing logging handlers for writing to SQLite and pushing to Grafana Loki.
-    *   `export.py`: The logic for the `export-logs` command, using `pandas` and `openpyxl` to create a styled Excel report.
+*   **`src/log/` - Observability Infrastructure**
+    *   `setup.py`: Centralized logging configuration that sets up structured logging with multiple handlers, log levels, and output formats for both console and persistent storage.
+    *   `handler.py` (`SQLiteHandler`, `LokiHandler`): Production-grade custom logging handlers with batching, thread safety, automatic buffering, and integration with Grafana Loki for centralized log aggregation.
+    *   `export.py`: Advanced log analysis and reporting system that exports SQLite log data to styled Excel reports with conditional formatting, charts, and filtering capabilities.
 
-*   **`src/templates/` - HTML Templating**
-    *   `default.py` (`DefaultTemplate`): The default, feature-rich HTML template with responsive CSS and JavaScript. Provides the logic for rendering the final page.
+*   **`src/templates/` - Dynamic HTML Generation**
+    *   `default.py` (`DefaultTemplate`): A feature-rich, responsive HTML template with modern CSS Grid/Flexbox layouts, dark/light mode support, interactive navigation, and mobile-first design. Supports extensive customization through YAML front-matter context variables.
