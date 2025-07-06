@@ -7,8 +7,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.local.config import effective_settings as config
 
-logger = logging.getLogger(__name__)
-
 
 def get_popen_creation_flags() -> Dict[str, Any]:
     """
