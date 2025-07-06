@@ -34,6 +34,13 @@ NGINX_EXECUTABLE_PATH = EXTERNAL_DIR / "nginx" / "nginx"
 LOKI_PATH = EXTERNAL_DIR / "grafana" / "loki-windows-amd64"
 ALLOY_PATH = EXTERNAL_DIR / "grafana" / "alloy-windows-amd64"
 
+# --- Manager/Supervisor Settings ---
+SUPERVISOR_SLEEP_INTERVAL = 2
+MAX_RESTART_ATTEMPTS = 3
+RESTART_COOLDOWN_PERIOD = 30   # seconds
+ASGI_HEALTH_CHECK_TIMEOUT = 15 # seconds
+GRACEFUL_SHUTDOWN_TIMEOUT = 10 # seconds before force-killing
+
 # --- Web Server Settings ---
 # ASGI Server (Hypercorn) - internal application server
 WEB_SERVER_HOST = "127.0.0.1"
@@ -197,8 +204,15 @@ http {{
         # The root for this server is the output directory for converted assets.
         root "{assets_output_dir}";
 
+        error_page 307 = @backend_proxy;
+
         location / {{
-            # Tries to serve the requested file with various web-optimized extensions first.
+            # If ori=true parameter is present, bypass file serving and go directly to backend
+            if ($arg_ori = "true") {{
+                return 307 $uri;
+            }}
+
+            # Then tries to serve the requested file with various web-optimized extensions first.
             # $uri is the request path, e.g., /background.jpg
             # Nginx will check for existence in this order:
             # 1. /background.jpg (for non-media assets like CSS that are copied directly)
@@ -206,13 +220,13 @@ http {{
             # 3. /background.jpg.webm (for converted videos)
             # 4. /background.jpg.mp3 (for converted audio)
             # If none are found, it falls back to the Python app.
-            try_files $uri $uri.avif $uri.webm $uri.mp3 @asset_fallback;
+            try_files $uri $uri.avif $uri.webm $uri.mp3 @backend_proxy;
         }}
 
         # This named location is the fallback for assets not found in the root.
         # It proxies the request to the Python app with a special query parameter,
         # asking for the *original* unconverted file.
-        location @asset_fallback {{
+        location @backend_proxy {{
             proxy_pass http://{asgi_host}:{asgi_port}$uri?ori=true;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

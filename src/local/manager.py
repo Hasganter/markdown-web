@@ -13,8 +13,7 @@ from multiprocessing import Lock
 from src.web.process import scan_and_process_all_content, scan_and_process_all_assets, init_worker as init_content_worker
 import psutil
 
-from src.local.app_process import (get_executable_path, get_popen_creation_flags,
-                                 get_process_args, log_process_output)
+from src.local.app_process import get_executable_path, get_popen_creation_flags, get_process_args, log_process_output
 from src.local.config import effective_settings as config
 from src.local.database import LogDBManager, ContentDBManager
 from src.local.externals import DependencyManager
@@ -23,11 +22,11 @@ from src.log.setup import setup_logging
 logger = logging.getLogger(__name__)
 
 # --- Constants ---
-SUPERVISOR_SLEEP_INTERVAL = 2
-MAX_RESTART_ATTEMPTS = 3
-RESTART_COOLDOWN_PERIOD = 30  # seconds
-ASGI_HEALTH_CHECK_TIMEOUT = 15 # seconds
-GRACEFUL_SHUTDOWN_TIMEOUT = 10 # seconds before force-killing
+SUPERVISOR_SLEEP_INTERVAL = config.SUPERVISOR_SLEEP_INTERVAL or 2
+MAX_RESTART_ATTEMPTS = config.MAX_RESTART_ATTEMPTS or 3
+RESTART_COOLDOWN_PERIOD = config.RESTART_COOLDOWN_PERIOD or 30
+ASGI_HEALTH_CHECK_TIMEOUT = config.ASGI_HEALTH_CHECK_TIMEOUT or 15
+GRACEFUL_SHUTDOWN_TIMEOUT = config.GRACEFUL_SHUTDOWN_TIMEOUT or 10
 CRITICAL_PROCESSES = {"nginx", "asgi_server", "content_converter"}
 
 
