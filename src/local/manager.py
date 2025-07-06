@@ -19,7 +19,7 @@ from src.local.database import LogDBManager, ContentDBManager
 from src.local.externals import DependencyManager
 from src.log.setup import setup_logging
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 # --- Constants ---
 SUPERVISOR_SLEEP_INTERVAL = config.SUPERVISOR_SLEEP_INTERVAL or 2
@@ -56,7 +56,7 @@ class ProcessManager:
         Tails the Nginx access log file and processes new lines.
         This runs in a dedicated background thread until stop_tailing_event is set.
         """
-        logger.info(f"Starting to tail Nginx access log at: {log_path}")
+        log.info(f"Starting to tail Nginx access log at: {log_path}")
         
         # Wait for Nginx to start and create the log file
         for _ in range(5): # Wait up to 5 seconds
@@ -77,12 +77,12 @@ class ProcessManager:
                     self.log_db_manager.insert_nginx_log(line.strip())
         except FileNotFoundError:
             if not self.shutdown_signal_received.is_set():
-                logger.error(f"Nginx log file not found at {log_path}. Tailing failed. Nginx might not have started correctly.")
+                log.error(f"Nginx log file not found at {log_path}. Tailing failed. Nginx might not have started correctly.")
         except Exception as e:
             if not self.shutdown_signal_received.is_set():
-                logger.error(f"Error while tailing Nginx log file: {e}", exc_info=True)
+                log.error(f"Error while tailing Nginx log file: {e}", exc_info=True)
         
-        logger.info("Nginx log tailing thread has stopped.")
+        log.info("Nginx log tailing thread has stopped.")
 
     def check_configuration(self) -> bool:
         """
@@ -90,7 +90,7 @@ class ProcessManager:
 
         :return bool: True if all required executables are found, otherwise False.
         """
-        logger.info("Performing configuration and path validation...")
+        log.info("Performing configuration and path validation...")
         all_ok = True
         checks = {
             "FFmpeg": config.FFMPEG_PATH,
@@ -105,10 +105,10 @@ class ProcessManager:
         for name, path_base in checks.items():
             path_exe = get_executable_path(path_base)
             if not path_exe.exists():
-                logger.error(f"CONFIG CHECK FAILED: {name} not found at '{path_exe}'")
+                log.error(f"CONFIG CHECK FAILED: {name} not found at '{path_exe}'")
                 all_ok = False
             else:
-                logger.info(f"Config Check OK: Found {name} at '{path_exe}'")
+                log.info(f"Config Check OK: Found {name} at '{path_exe}'")
         return all_ok
 
     def get_pid_info(self) -> Optional[Dict[str, int]]:
@@ -123,13 +123,13 @@ class ProcessManager:
             with config.PID_FILE_PATH.open("r") as f:
                 pids = json.load(f)
             if not isinstance(pids, dict):
-                logger.error(f"PID file '{config.PID_FILE_PATH}' is malformed. Deleting.")
+                log.error(f"PID file '{config.PID_FILE_PATH}' is malformed. Deleting.")
                 config.PID_FILE_PATH.unlink()
                 return None
             self.pids_on_disk = pids
             return pids
         except (json.JSONDecodeError, IOError):
-            logger.warning("Could not read PID file, assuming stale.")
+            log.warning("Could not read PID file, assuming stale.")
             if config.PID_FILE_PATH.exists():
                 config.PID_FILE_PATH.unlink(missing_ok=True)
             return None
@@ -144,7 +144,7 @@ class ProcessManager:
             # Atomic move/replace
             temp_pid_path.replace(config.PID_FILE_PATH)
         except (IOError, OSError) as e:
-            logger.error(f"Failed to write PID file: {e}", exc_info=True)
+            log.error(f"Failed to write PID file: {e}", exc_info=True)
         finally:
             temp_pid_path.unlink(missing_ok=True)
 
@@ -172,7 +172,7 @@ class ProcessManager:
                 threads=hypercorn_threads,
             )
             config.HYPERCORN_CONFIG_PATH.write_text(hypercorn_conf_content)
-            logger.info(f"Hypercorn config written to '{config.HYPERCORN_CONFIG_PATH}' for '{config.HYPERCORN_MODE}' mode.")
+            log.info(f"Hypercorn config written to '{config.HYPERCORN_CONFIG_PATH}' for '{config.HYPERCORN_MODE}' mode.")
 
             # --- Nginx Config ---
             # Ensure a clean slate for nginx config in `bin`
@@ -199,7 +199,7 @@ class ProcessManager:
 
             (config.BIN_DIR / "logs").mkdir(exist_ok=True)
             (config.BIN_DIR / "temp").mkdir(exist_ok=True)
-            logger.info("Nginx configs and directories prepared in 'bin/'.")
+            log.info("Nginx configs and directories prepared in 'bin/'.")
 
             # --- Loki/Alloy Configs ---
             if config.LOKI_ENABLED:
@@ -220,9 +220,9 @@ class ProcessManager:
                     nginx_log_path=str((config.BIN_DIR / "logs" / "access.log").resolve()).replace("\\", "/")
                 )
                 config.ALLOY_CONFIG_PATH.write_text(alloy_conf)
-                logger.info("Loki and Alloy configs written.")
+                log.info("Loki and Alloy configs written.")
         except Exception as e:
-            logger.critical(f"Failed to write one or more configuration files: {e}", exc_info=True)
+            log.critical(f"Failed to write one or more configuration files: {e}", exc_info=True)
             raise  # Re-raise to be caught by start_all
 
     def _launch_process(self, name: str) -> None:
@@ -232,7 +232,7 @@ class ProcessManager:
         :param name: The logical name of the process to launch.
         :raises Exception: Propagates exceptions from subprocess creation or argument fetching.
         """
-        logger.info(f"Starting process: {name}...")
+        log.info(f"Starting process: {name}...")
         try:
             args, cwd = get_process_args(name)
             popen_kwargs = get_popen_creation_flags()
@@ -253,9 +253,9 @@ class ProcessManager:
 
             # Store the psutil.Process object for supervision.
             self.running_procs[name] = psutil.Process(p.pid)
-            logger.info(f"{name.capitalize()} started successfully with PID: {p.pid}")
+            log.info(f"{name.capitalize()} started successfully with PID: {p.pid}")
         except (FileNotFoundError, ValueError, Exception) as e:
-            logger.critical(f"Failed to start process '{name}': {e}", exc_info=True)
+            log.critical(f"Failed to start process '{name}': {e}", exc_info=True)
             raise
 
     def _wait_for_asgi_server(self) -> bool:
@@ -264,16 +264,16 @@ class ProcessManager:
 
         :return bool: True if the server is up, False if it times out.
         """
-        logger.info(f"Waiting for ASGI server at {config.WEB_SERVER_HOST}:{config.WEB_SERVER_PORT}...")
+        log.info(f"Waiting for ASGI server at {config.WEB_SERVER_HOST}:{config.WEB_SERVER_PORT}...")
         start_time = time.monotonic()
         while time.monotonic() - start_time < ASGI_HEALTH_CHECK_TIMEOUT:
             try:
                 with socket.create_connection((config.WEB_SERVER_HOST, config.WEB_SERVER_PORT), timeout=1):
-                    logger.info("ASGI server is up and listening.")
+                    log.info("ASGI server is up and listening.")
                     return True
             except (socket.timeout, ConnectionRefusedError):
                 time.sleep(0.5)
-        logger.critical(f"ASGI server did not become available after {ASGI_HEALTH_CHECK_TIMEOUT} seconds.")
+        log.critical(f"ASGI server did not become available after {ASGI_HEALTH_CHECK_TIMEOUT} seconds.")
         return False
 
     def start_all(self, verbose: bool = False) -> bool:
@@ -284,24 +284,24 @@ class ProcessManager:
         :return bool: True on successful startup, False on failure.
         """
         if self.get_pid_info() and any(psutil.pid_exists(p) for p in self.get_pid_info().values()):
-            logger.error("Application appears to be running. Use 'stop' or 'restart'.")
+            log.error("Application appears to be running. Use 'stop' or 'restart'.")
             return False
 
         # Set up logging with desired verbosity for the startup sequence
         console_level = logging.DEBUG if verbose else logging.INFO
         setup_logging(console_level)
 
-        logger.info("=" * 20 + " Application Starting " + "=" * 20)
+        log.info("=" * 20 + " Application Starting " + "=" * 20)
         self.running_procs.clear()
 
         # Dependencies check and installation
         is_first_run = not any(p.is_dir() for p in config.EXTERNAL_DIR.iterdir() if not p.name.startswith('.'))
         if is_first_run:
-            logger.warning("External dependency directory is empty. Running initial installation...")
+            log.warning("External dependency directory is empty. Running initial installation...")
             if not self.dependency_manager.ensure_all_dependencies_installed():
-                logger.critical("Dependency installation failed. Cannot start application.")
+                log.critical("Dependency installation failed. Cannot start application.")
                 return False
-            logger.info("Initial dependency installation complete.")
+            log.info("Initial dependency installation complete.")
 
 
         try:
@@ -309,14 +309,14 @@ class ProcessManager:
             self.write_config_files()
             self.log_db_manager.initialize_database()
 
-            logger.info("--- Performing initial blocking content and asset scan ---")
+            log.info("--- Performing initial blocking content and asset scan ---")
             db_lock = Lock()
             # The content converter process needs its own DB manager instance and a lock.
             init_content_worker(db_lock)
             self.content_db_manager.initialize_database()
             scan_and_process_all_content()
             scan_and_process_all_assets()
-            logger.info("--- Initial blocking scan complete. Starting background processes. ---")
+            log.info("--- Initial blocking scan complete. Starting background processes. ---")
 
             process_launch_order = [
                 ("loki", config.LOKI_ENABLED),
@@ -353,7 +353,7 @@ class ProcessManager:
                     tail_thread.start()
 
             self._write_pid_file()
-            logger.info("All application processes started successfully.")
+            log.info("All application processes started successfully.")
 
             update_thread = threading.Thread(
                 target=self.dependency_manager.check_for_updates_async,
@@ -364,7 +364,7 @@ class ProcessManager:
             
             return True
         except Exception as e:
-            logger.critical(f"Startup failed due to an error: {e}", exc_info=True)
+            log.critical(f"Startup failed due to an error: {e}", exc_info=True)
             self.stop_all(is_cleanup_after_failure=True)
             return False
 
@@ -382,7 +382,7 @@ class ProcessManager:
         parent_procs: Set[psutil.Process] = set()
         if is_cleanup_after_failure:
             parent_procs = {p for p in self.running_procs.values() if p.is_running()}
-            logger.warning("Cleaning up processes after a startup failure.")
+            log.warning("Cleaning up processes after a startup failure.")
         else:
             pid_info = self.get_pid_info() or {}
             parent_procs = {psutil.Process(pid) for pid in pid_info.values() if psutil.pid_exists(pid)}
@@ -393,10 +393,10 @@ class ProcessManager:
             try:
                 master_pid = int(hypercorn_pid_path.read_text().strip())
                 if psutil.pid_exists(master_pid):
-                    logger.info(f"Found active Hypercorn master PID {master_pid} from file. Adding to shutdown.")
+                    log.info(f"Found active Hypercorn master PID {master_pid} from file. Adding to shutdown.")
                     parent_procs.add(psutil.Process(master_pid))
             except (ValueError, IOError, psutil.Error) as e:
-                logger.error(f"Could not read or use Hypercorn PID file: {e}")
+                log.error(f"Could not read or use Hypercorn PID file: {e}")
     
         # Recursively find all children of all parent processes
         all_procs_to_stop: Set[psutil.Process] = set(parent_procs)
@@ -404,17 +404,17 @@ class ProcessManager:
             try:
                 children = proc.children(recursive=True)
                 if children:
-                    logger.debug(f"Found {len(children)} child process(es) for {proc.name()} (PID {proc.pid}).")
+                    log.debug(f"Found {len(children)} child process(es) for {proc.name()} (PID {proc.pid}).")
                     all_procs_to_stop.update(children)
             except psutil.NoSuchProcess:
                 continue # Parent died before we could check for children
     
         if not all_procs_to_stop:
-            logger.info("No running application processes found to stop.")
+            log.info("No running application processes found to stop.")
             self._cleanup_shutdown_files()
             return
     
-        logger.info(f"Initiating graceful shutdown for {len(all_procs_to_stop)} total processes (parents and children)...")
+        log.info(f"Initiating graceful shutdown for {len(all_procs_to_stop)} total processes (parents and children)...")
     
         # --- Stage 2: Graceful Shutdown ---
         # Send Nginx 'quit' command for graceful shutdown
@@ -422,15 +422,15 @@ class ProcessManager:
             nginx_exe = get_executable_path(config.NGINX_EXECUTABLE_PATH)
             cmd = [str(nginx_exe.resolve()), '-s', 'quit', '-p', str(config.BIN_DIR.resolve())]
             subprocess.run(cmd, timeout=10, check=False, capture_output=True)
-            logger.info("Nginx graceful quit signal sent.")
+            log.info("Nginx graceful quit signal sent.")
         except Exception as e:
-            logger.error(f"Failed to send graceful quit signal to Nginx: {e}")
+            log.error(f"Failed to send graceful quit signal to Nginx: {e}")
     
         # Terminate all other processes (SIGTERM)
         for proc in all_procs_to_stop:
             try:
                 if 'nginx' not in proc.name().lower():
-                    logger.debug(f"Sending SIGTERM to {proc.name()} (PID {proc.pid})")
+                    log.debug(f"Sending SIGTERM to {proc.name()} (PID {proc.pid})")
                     proc.terminate()
             except psutil.NoSuchProcess:
                 continue
@@ -440,23 +440,23 @@ class ProcessManager:
         try:
             gone, alive = psutil.wait_procs(procs_list, timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
             for proc in gone:
-                logger.debug(f"Process {proc.name()} (PID {proc.pid}) terminated gracefully.")
+                log.debug(f"Process {proc.name()} (PID {proc.pid}) terminated gracefully.")
         except psutil.TimeoutExpired:
             alive = procs_list
     
         # --- Stage 4: Forceful Shutdown (Kill) ---
         if alive:
-            logger.warning(f"{len(alive)} processes did not terminate gracefully. Forcing shutdown...")
+            log.warning(f"{len(alive)} processes did not terminate gracefully. Forcing shutdown...")
             for proc in alive:
                 try:
-                    logger.warning(f"Killing stubborn process {proc.name()} (PID {proc.pid}).")
+                    log.warning(f"Killing stubborn process {proc.name()} (PID {proc.pid}).")
                     proc.kill()
                 except psutil.NoSuchProcess:
                     pass
     
         self._cleanup_shutdown_files()
         self.running_procs.clear()
-        logger.info("Application stop sequence completed.")
+        log.info("Application stop sequence completed.")
 
 
     def _cleanup_shutdown_files(self) -> None:
@@ -464,7 +464,7 @@ class ProcessManager:
         config.PID_FILE_PATH.unlink(missing_ok=True)
         config.SHUTDOWN_SIGNAL_PATH.unlink(missing_ok=True)
         (config.BIN_DIR / "hypercorn.pid").unlink(missing_ok=True)
-        logger.debug("Cleaned up PID and signal files.")
+        log.debug("Cleaned up PID and signal files.")
 
 
     def _attempt_restart(self, process_name: str) -> bool:
@@ -475,21 +475,21 @@ class ProcessManager:
         :return bool: True if restart was successful, False otherwise.
         """
         if self.restart_cooldown_timers.get(process_name, 0) > time.time():
-            logger.debug(f"Process '{process_name}' is in cooldown. Skipping restart.")
+            log.debug(f"Process '{process_name}' is in cooldown. Skipping restart.")
             return False
 
         current_failures = self.restart_failures.get(process_name, 0)
         if current_failures >= MAX_RESTART_ATTEMPTS:
-            logger.critical(
+            log.critical(
                 f"Process '{process_name}' has failed {current_failures} times. "
                 "Halting restart attempts."
             )
             return False
 
-        logger.warning(f"Process '{process_name}' is down. Restart attempt #{current_failures + 1}...")
+        log.warning(f"Process '{process_name}' is down. Restart attempt #{current_failures + 1}...")
         try:
             self._launch_process(process_name)
-            logger.info(f"Process '{process_name}' restarted successfully.")
+            log.info(f"Process '{process_name}' restarted successfully.")
             # On success, reset failure count and cooldown.
             self.restart_failures.pop(process_name, None)
             self.restart_cooldown_timers.pop(process_name, None)
@@ -498,7 +498,7 @@ class ProcessManager:
         except Exception:
             self.restart_failures[process_name] = current_failures + 1
             self.restart_cooldown_timers[process_name] = time.time() + RESTART_COOLDOWN_PERIOD
-            logger.error(
+            log.error(
                 f"Failed to restart '{process_name}'. Cooldown active for {RESTART_COOLDOWN_PERIOD}s."
             )
             return False
@@ -509,12 +509,12 @@ class ProcessManager:
         if not temp_update_dir.is_dir():
             return
 
-        logger.warning("Pending dependency updates found. Applying now...")
+        log.warning("Pending dependency updates found. Applying now...")
         for dep_key_dir in temp_update_dir.iterdir():
             if dep_key_dir.is_dir():
                 dep_key = dep_key_dir.name
                 if dep_key in config.EXTERNAL_DEPENDENCIES:
-                    logger.info(f"Applying update for {dep_key}...")
+                    log.info(f"Applying update for {dep_key}...")
                     # 1. Archive current version
                     self.dependency_manager._archive_current_version(dep_key)
                     # 2. Move in the new version from temp
@@ -522,20 +522,20 @@ class ProcessManager:
                     target_path = config.EXTERNAL_DIR / config.EXTERNAL_DEPENDENCIES[dep_key]['target_dir_name']
                     try:
                         shutil.move(str(new_version_path), str(target_path))
-                        logger.info(f"Update for {dep_key} applied successfully.")
+                        log.info(f"Update for {dep_key} applied successfully.")
                     except OSError as e:
-                        logger.error(f"Failed to apply update for {dep_key}: {e}")
+                        log.error(f"Failed to apply update for {dep_key}: {e}")
 
         # Clean up the temp update directory
         shutil.rmtree(temp_update_dir)
-        logger.warning("All pending updates applied.")
+        log.warning("All pending updates applied.")
 
     def supervision_loop(self) -> None:
         """Main supervisor loop that monitors and restarts critical processes."""
         # Use setup_logging to ensure the supervisor has its own clean logging
         setup_logging()
         
-        logger.info("Supervisor started. Monitoring application processes.")
+        log.info("Supervisor started. Monitoring application processes.")
         self.shutdown_signal_received.clear()
 
         # Initialize internal state from PID file on supervisor startup.
@@ -549,7 +549,7 @@ class ProcessManager:
         while not self.shutdown_signal_received.is_set():
             try:
                 if config.SHUTDOWN_SIGNAL_PATH.exists():
-                    logger.info("Shutdown signal file detected. Exiting supervisor loop.")
+                    log.info("Shutdown signal file detected. Exiting supervisor loop.")
                     break
 
                 # Create a copy of items to allow modification during iteration
@@ -569,14 +569,14 @@ class ProcessManager:
                         except psutil.Error:
                             pass
                         
-                        logger.warning(f"Detected {status} process: {name} (PID: {proc.pid})")
+                        log.warning(f"Detected {status} process: {name} (PID: {proc.pid})")
                         self.running_procs.pop(name, None)
 
                         if name in CRITICAL_PROCESSES:
                             if not self._attempt_restart(name):
                                 # If restart fails and we've hit max attempts, panic.
                                 if self.restart_failures.get(name, 0) >= MAX_RESTART_ATTEMPTS:
-                                    logger.critical(
+                                    log.critical(
                                         f"PANIC: Unrecoverable failure for critical process '{name}'. "
                                         "Initiating full application shutdown."
                                     )
@@ -587,9 +587,9 @@ class ProcessManager:
                 time.sleep(SUPERVISOR_SLEEP_INTERVAL)
 
             except KeyboardInterrupt:
-                logger.info("Supervisor loop interrupted by user.")
+                log.info("Supervisor loop interrupted by user.")
                 break
             except Exception as e:
-                logger.critical(f"Critical error in supervisor loop: {e}", exc_info=True)
+                log.critical(f"Critical error in supervisor loop: {e}", exc_info=True)
                 self.stop_all()
                 return

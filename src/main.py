@@ -15,7 +15,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)-8s - [console] - %(message)s',
     stream=sys.stdout
 )
-logger = logging.getLogger("console")
+log = logging.getLogger("console")
 
 from src.local.config import effective_settings as config
 from src.local.database import LogDBManager
@@ -67,7 +67,7 @@ def load_current_overrides() -> None:
             with config.OVERRIDES_JSON_PATH.open('r') as f:
                 current_overrides = json.load(f)
         except (json.JSONDecodeError, IOError) as e:
-            logger.warning(f"Could not load overrides from json: {e}")
+            log.warning(f"Could not load overrides from json: {e}")
             current_overrides = {}
     else:
         current_overrides = {}
@@ -243,7 +243,7 @@ def handle_logs_command() -> None:
             print(log.message)
             last_ts = max(last_ts, log.timestamp)
     except Exception as e:
-        logger.error(f"Failed to fetch initial log history: {e}")
+        log.error(f"Failed to fetch initial log history: {e}")
         return
 
     print("\n--- Now tailing new log entries (Press any key to stop) ---\n")
@@ -262,7 +262,7 @@ def handle_logs_command() -> None:
     except (KeyboardInterrupt, SystemExit):
         print("\n--- Log tailing interrupted. Returning to console. ---")
     except Exception as e:
-        logger.error(f"An error occurred during log tailing: {e}", exc_info=True)
+        log.error(f"An error occurred during log tailing: {e}", exc_info=True)
 
 def toggle_verbose_logging() -> None:
     """Toggles verbose (DEBUG level) logging for the console handler."""
@@ -282,7 +282,7 @@ def toggle_verbose_logging() -> None:
     status = "ON" if VERBOSE_LOGGING else "OFF"
     if found_handler:
         print(f"Verbose console logging is now {status}.")
-        logger.debug("Debug logging test: This message should only appear when verbose is ON.")
+        log.debug("Debug logging test: This message should only appear when verbose is ON.")
     else:
         print("Could not find console handler to modify level.")
 
@@ -393,7 +393,7 @@ def main() -> None:
                 break
         except Exception as e:
             with CONSOLE_LOCK:
-                logger.error(f"An unexpected error occurred in the console: {e}", exc_info=True)
+                log.error(f"An unexpected error occurred in the console: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()

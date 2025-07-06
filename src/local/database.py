@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple, Dict, Any
 
 from src.local.config import effective_settings as config
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 LogEntry = namedtuple('LogEntry', ['timestamp', 'level', 'module', 'message'])
 
@@ -58,9 +58,9 @@ class LogDBManager:
                     )
                 """)
                 conn.commit()
-                logger.info("Log database tables created/verified.")
+                log.info("Log database tables created/verified.")
         except sqlite3.Error as e:
-            logger.critical(f"Could not create log database tables: {e}", exc_info=True)
+            log.critical(f"Could not create log database tables: {e}", exc_info=True)
             raise
 
     def insert_nginx_log(self, log_line: str) -> None:
@@ -87,7 +87,7 @@ class LogDBManager:
                 )
                 conn.commit()
         except (json.JSONDecodeError, sqlite3.Error, KeyError) as e:
-            logger.error(f"Failed to process Nginx log line: '{log_line}'. Error: {e}")
+            log.error(f"Failed to process Nginx log line: '{log_line}'. Error: {e}")
 
     def fetch_last_entries(self, limit: int) -> List[LogEntry]:
         """
@@ -113,7 +113,7 @@ class LogDBManager:
                         message=f"{dt} - {row['level']:<8} - [{row['module']}] - {row['message']}"
                     ))
         except sqlite3.Error as e:
-            logger.error(f"Failed to fetch log entries from database: {e}")
+            log.error(f"Failed to fetch log entries from database: {e}")
         return entries
 
     def listen_for_updates(self, last_timestamp: float) -> Tuple[List[LogEntry], float]:
@@ -142,7 +142,7 @@ class LogDBManager:
                     new_entries.append(entry)
                     new_last_ts = max(new_last_ts, entry.timestamp)
         except sqlite3.Error as e:
-            logger.error(f"Failed to poll log database for updates: {e}")
+            log.error(f"Failed to poll log database for updates: {e}")
 
         return new_entries, new_last_ts
 
@@ -199,9 +199,9 @@ class ContentDBManager:
                     )
                 """)
                 conn.commit()
-            logger.info(f"Content database '{self.db_path}' initialized/checked in WAL mode.")
+            log.info(f"Content database '{self.db_path}' initialized/checked in WAL mode.")
         except sqlite3.Error as e:
-            logger.critical(f"Error initializing content database: {e}", exc_info=True)
+            log.critical(f"Error initializing content database: {e}", exc_info=True)
             raise
 
     def get_page_hash(self, path_key: str) -> Optional[str]:
@@ -218,7 +218,7 @@ class ContentDBManager:
                 row = cursor.fetchone()
                 return row[0] if row else None
         except sqlite3.Error as e:
-            logger.error(f"Error fetching SHA for page {path_key}: {e}")
+            log.error(f"Error fetching SHA for page {path_key}: {e}")
             return None
 
     def _execute_write(self, query: str, params: tuple):
@@ -231,7 +231,7 @@ class ContentDBManager:
                     conn.execute(query, params)
                     conn.commit()
             except sqlite3.Error as e:
-                logger.error(f"DB write operation failed for query '{query[:50]}...': {e}")
+                log.error(f"DB write operation failed for query '{query[:50]}...': {e}")
                 raise
 
     def update_page(self, path_key: str, source_hash: str, html: str, title: str, methods: List[str]) -> None:
@@ -252,7 +252,7 @@ class ContentDBManager:
         """
         params = (path_key, source_hash, html, title, time.time(), methods_str)
         self._execute_write(query, params)
-        logger.info(f"Page {path_key} updated in DB (Methods: {methods_str}).")
+        log.info(f"Page {path_key} updated in DB (Methods: {methods_str}).")
 
     def delete_page(self, path_key: str) -> None:
         """
@@ -262,7 +262,7 @@ class ContentDBManager:
         """
         query = "DELETE FROM pages WHERE path_key = ?"
         self._execute_write(query, (path_key,))
-        logger.info(f"Page {path_key} removed from DB.")
+        log.info(f"Page {path_key} removed from DB.")
 
     @staticmethod
     def get_subdomain_from_path(path: Path) -> Optional[str]:

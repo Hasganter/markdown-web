@@ -21,7 +21,7 @@ from src.log.setup import setup_logging
 
 # --- Setup Logging for this Module ---
 setup_logging(console_level=logging.INFO)
-logger = logging.getLogger("asgi_server")
+log = logging.getLogger("asgi_server")
 
 # --- Middleware rewritten for Starlette ---
 
@@ -67,7 +67,7 @@ class DDoSMiddleware(BaseHTTPMiddleware):
 
         async with self._lock:
             if ip in self._blocked_ips and self._blocked_ips[ip] > current_time:
-                logger.warning(f"Blocking request from already-blocked IP: {ip}")
+                log.warning(f"Blocking request from already-blocked IP: {ip}")
                 return PlainTextResponse("Too Many Requests", status_code=429)
 
             timestamps = self._ip_requests.setdefault(ip, deque())
@@ -78,7 +78,7 @@ class DDoSMiddleware(BaseHTTPMiddleware):
 
             if len(timestamps) > config.REQUESTS_LIMIT_PER_WINDOW:
                 self._blocked_ips[ip] = current_time + config.BLOCK_DURATION_SECONDS
-                logger.critical(
+                log.critical(
                     f"DDoS PROTECT: Rate limit exceeded for IP {ip}. "
                     f"Blocking for {config.BLOCK_DURATION_SECONDS}s."
                 )
@@ -124,7 +124,7 @@ async def get_page_data_from_db(path_key: str) -> Optional[Dict[str, Any]]:
                 row = cursor.fetchone()
                 return (row["html_content"], row["title"], row["allowed_methods"]) if row else None
         except sqlite3.OperationalError as e:
-            logger.error(f"DB Read failed for key '{path_key}': {e}", exc_info=True)
+            log.error(f"DB Read failed for key '{path_key}': {e}", exc_info=True)
             return None
 
     result_tuple = await asyncio.get_running_loop().run_in_executor(None, db_read_sync)
@@ -141,19 +141,19 @@ def get_subdomain_and_path(request: Request) -> Tuple[str, str]:
     host = host.removesuffix(config.APP_DOMAIN.lower()).removesuffix(config.APP_DOMAIN.lower().removesuffix(f":{config.NGINX_PORT}"))
     subdomain = "main"
 
-    logger.debug(f"Host after removing app domain: {host}")
+    log.debug(f"Host after removing app domain: {host}")
     if host.endswith("."):
         subdomain = host.removesuffix(".")
 
     web_path = request.url.path
-    logger.debug(f"returning subdomain: '{subdomain}', web path: '{web_path}'")
+    log.debug(f"returning subdomain: '{subdomain}', web path: '{web_path}'")
     return subdomain, web_path.rstrip("/") if len(web_path) > 1 else "/"
 
 
 async def handle_asset_request(request: Request) -> FileResponse:
     """Handles proxied requests for original, unconverted assets."""
     if request.query_params.get("ori", "false").lower() != "true":
-        logger.warning(
+        log.warning(
             f"Asset request for '{request.url.path}' without 'ori=true' was proxied to the app. "
             "This indicates a potential Nginx misconfiguration."
         )
@@ -163,11 +163,11 @@ async def handle_asset_request(request: Request) -> FileResponse:
     # Security: Prevent directory traversal.
     requested_path = assets_dir.joinpath(request.url.path.lstrip('/')).resolve()
     if not str(requested_path).startswith(str(assets_dir)):
-        logger.warning(f"Directory traversal attempt blocked for asset: {request.url.path}")
+        log.warning(f"Directory traversal attempt blocked for asset: {request.url.path}")
         raise HTTPException(status_code=404)
 
     if requested_path.is_file():
-        logger.debug(f"Serving original asset '{requested_path.name}' due to 'ori=true'.")
+        log.debug(f"Serving original asset '{requested_path.name}' due to 'ori=true'.")
         return FileResponse(requested_path)
 
     raise HTTPException(status_code=404, detail="Asset file does not exist")
@@ -176,7 +176,7 @@ async def handle_asset_request(request: Request) -> FileResponse:
 async def handle_websocket_connection(websocket: WebSocket) -> None:
     """Manages an individual WebSocket connection."""
     await websocket.accept()
-    logger.info(f"WebSocket connection established from {websocket.client.host}")
+    log.info(f"WebSocket connection established from {websocket.client.host}")
     try:
         while True:
             data = await websocket.receive_text()
@@ -184,16 +184,16 @@ async def handle_websocket_connection(websocket: WebSocket) -> None:
                 break
             await websocket.send_text(f"Echo from server: {data}")
     except Exception as e:
-        logger.warning(f"WebSocket Error: {e}")
+        log.warning(f"WebSocket Error: {e}")
     finally:
         await websocket.close()
-        logger.info(f"WebSocket connection from {websocket.client.host} closed.")
+        log.info(f"WebSocket connection from {websocket.client.host} closed.")
 
 
 # --- Main Request Handler ---
 async def main_handler(request: Request) -> Response:
     """The main request handler for all incoming HTTP requests."""
-    logger.debug(f"Received request: {request.method} {request.url.path} from {request.client.host}")
+    log.debug(f"Received request: {request.method} {request.url.path} from {request.client.host}")
     domain_part, web_path = get_subdomain_and_path(request)
 
     if domain_part == config.ASSETS_SUBDOMAIN_NAME:
@@ -209,7 +209,7 @@ async def main_handler(request: Request) -> Response:
         return Response(status_code=101) # Switching Protocols
 
     path_key = f"{domain_part}:{web_path}"
-    logger.debug(f"Request: Host='{request.headers['host']}', Path='{request.url.path}' -> DBKey='{path_key}'")
+    log.debug(f"Request: Host='{request.headers['host']}', Path='{request.url.path}' -> DBKey='{path_key}'")
 
     page_data = await get_page_data_from_db(path_key)
     if not page_data:
@@ -224,7 +224,7 @@ async def main_handler(request: Request) -> Response:
 
     if request.method == "POST":
         form_data = await request.form()
-        logger.info(f"Received POST data for {path_key}: {dict(form_data)}")
+        log.info(f"Received POST data for {path_key}: {dict(form_data)}")
         return HTMLResponse(f"<h1>Successfully handled POST for {path_key}.</h1>")
 
     return Response(status_code=204) # No Content for other methods like HEAD
@@ -239,10 +239,10 @@ middleware = [
     Middleware(SecurityHeadersMiddleware),
 ]
 if config.DDOS_PROTECTION_ENABLED:
-    logger.warning("Python-level DDoS protection (fallback) is ENABLED.")
+    log.warning("Python-level DDoS protection (fallback) is ENABLED.")
     middleware.append(Middleware(DDoSMiddleware))
 else:
-    logger.info("Python-level DDoS protection is DISABLED (recommended when using Nginx).")
+    log.info("Python-level DDoS protection is DISABLED (recommended when using Nginx).")
 
 # The main application object to be loaded by Hypercorn
 app = Starlette(debug=False, routes=routes, middleware=middleware)
@@ -250,4 +250,4 @@ app = Starlette(debug=False, routes=routes, middleware=middleware)
 # Set the process title when the module is loaded by Hypercorn
 setproctitle.setproctitle("MDWeb - ASGI Server")
 
-logger.info("Starlette ASGI web server worker configured and ready.")
+log.info("Starlette ASGI web server worker configured and ready.")

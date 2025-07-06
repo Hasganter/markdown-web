@@ -29,7 +29,7 @@ from src.log.setup import setup_logging
 from src.templates.default import DefaultTemplate
 
 # This logger will be configured by the setup_logging call.
-logger = logging.getLogger("content_converter")
+log = logging.getLogger("content_converter")
 DB_LOCK: Optional[LockType] = None
 # The global db_manager will be instantiated per worker process.
 db_manager: Optional[ContentDBManager] = None
@@ -84,9 +84,9 @@ def parse_source_with_yaml_header(source_content: str) -> Tuple[str, Dict[str, A
             # Ensure methods are uppercase strings.
             config_data["ALLOWED_METHODS"] = [str(m).upper().strip() for m in methods] if isinstance(methods, list) else ["GET"]
         else:
-            logger.warning("YAML front matter did not parse into a dictionary. Ignoring.")
+            log.warning("YAML front matter did not parse into a dictionary. Ignoring.")
     except yaml.YAMLError as e:
-        logger.error(f"Error parsing YAML front matter: {e}", exc_info=True)
+        log.error(f"Error parsing YAML front matter: {e}", exc_info=True)
 
     return body_content, config_data
 
@@ -125,10 +125,10 @@ def process_asset_file(source_path: Path) -> None:
         output_path = config.ASSETS_OUTPUT_DIR / source_path.name
         # Check if the destination is older than the source before copying.
         if not output_path.exists() or output_path.stat().st_mtime < source_path.stat().st_mtime:
-            logger.info(f"Copying static asset '{source_path.name}' to output directory.")
+            log.info(f"Copying static asset '{source_path.name}' to output directory.")
             shutil.copy2(source_path, output_path)  # copy2 preserves metadata
         else:
-            logger.debug(f"Static asset '{output_path.name}' is up-to-date. Skipping copy.")
+            log.debug(f"Static asset '{output_path.name}' is up-to-date. Skipping copy.")
         return
 
     # --- Media Conversion Logic ---
@@ -137,15 +137,15 @@ def process_asset_file(source_path: Path) -> None:
     output_path = config.ASSETS_OUTPUT_DIR / output_filename
 
     if output_path.exists() and output_path.stat().st_mtime > source_path.stat().st_mtime:
-        logger.debug(f"Skipping asset conversion, '{output_path.name}' is up-to-date.")
+        log.debug(f"Skipping asset conversion, '{output_path.name}' is up-to-date.")
         return
 
     ffmpeg_exe = get_executable_path(config.FFMPEG_PATH)
     if not ffmpeg_exe.exists():
-        logger.critical(f"FFmpeg not found at '{ffmpeg_exe}'. Asset conversion is disabled.")
+        log.critical(f"FFmpeg not found at '{ffmpeg_exe}'. Asset conversion is disabled.")
         return
 
-    logger.info(f"Converting '{source_path.name}' -> '{output_path.name}'...")
+    log.info(f"Converting '{source_path.name}' -> '{output_path.name}'...")
     command_map = {
         'image': ['-i', str(source_path), '-c:v', 'libaom-av1', '-crf', '30', '-b:v', '0', '-y', str(output_path)],
         'video': ['-i', str(source_path), '-c:v', 'libvpx-vp9', '-crf', '35', '-b:v', '0', '-c:a', 'libopus', '-b:a', '96k', '-y', str(output_path)],
@@ -158,12 +158,12 @@ def process_asset_file(source_path: Path) -> None:
         result = subprocess.run(
             command, check=True, capture_output=True, text=True, creationflags=creationflags
         )
-        logger.debug(f"FFmpeg output for {source_path.name}:\n{result.stdout}")
-        logger.info(f"Successfully converted '{source_path.name}'.")
+        log.debug(f"FFmpeg output for {source_path.name}:\n{result.stdout}")
+        log.info(f"Successfully converted '{source_path.name}'.")
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to convert '{source_path.name}'. FFmpeg error:\n{e.stderr}")
+        log.error(f"Failed to convert '{source_path.name}'. FFmpeg error:\n{e.stderr}")
     except FileNotFoundError:
-        logger.critical(f"FFmpeg executable not found at '{ffmpeg_exe}'. Cannot convert assets.")
+        log.critical(f"FFmpeg executable not found at '{ffmpeg_exe}'. Cannot convert assets.")
 
 
 def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple[str, bool]:
@@ -178,12 +178,12 @@ def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple
     :return tuple: A tuple containing the processed path_key and a boolean (True if skipped).
     """
     if not db_manager:
-        logger.error("DB Manager not initialized in worker. Cannot process directory.")
+        log.error("DB Manager not initialized in worker. Cannot process directory.")
         return str(dir_path), True
 
     content_file_path = db_manager.get_canonical_content_file(dir_path, subdomain)
     if not content_file_path:
-        logger.debug(f"No canonical content file for dir '{dir_path.name}'. Skipping.")
+        log.debug(f"No canonical content file for dir '{dir_path.name}'. Skipping.")
         return str(dir_path), True
 
     try:
@@ -192,10 +192,10 @@ def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple
         source_hash = hashlib.sha256(source_content.encode('utf-8')).hexdigest()
 
         if db_manager.get_page_hash(path_key) == source_hash:
-            logger.debug(f"Content for {path_key} is unchanged. Skipping.")
+            log.debug(f"Content for {path_key} is unchanged. Skipping.")
             return path_key, True
 
-        logger.info(f"Processing update for {path_key} from {content_file_path.name}...")
+        log.info(f"Processing update for {path_key} from {content_file_path.name}...")
         body_content, cfg = parse_source_with_yaml_header(source_content)
         context = cfg.get("CONTEXT", {})
         template_cfg = cfg.get("TEMPLATE", {})
@@ -210,7 +210,7 @@ def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple
                 TemplateClass = getattr(mod, template_cfg['class'])
                 template_instance = TemplateClass()
             except (ImportError, AttributeError) as e:
-                logger.error(f"Failed to load custom template for {path_key}: {e}. Using default.")
+                log.error(f"Failed to load custom template for {path_key}: {e}. Using default.")
 
         html_fragment = Markdown().convert(body_content) if content_file_path.suffix == '.md' else body_content
         final_html = template_instance.convert(html_fragment, context)
@@ -219,7 +219,7 @@ def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple
         return path_key, False
 
     except Exception as e:
-        logger.error(f"Unhandled exception processing {content_file_path}: {e}", exc_info=True)
+        log.error(f"Unhandled exception processing {content_file_path}: {e}", exc_info=True)
         return f"error:{dir_path.name}", False
 
 
@@ -227,10 +227,10 @@ def scan_and_process_all_content() -> None:
     """
     Performs a full scan of all content directories and processes them in parallel.
     """
-    logger.info("Starting full scan and conversion of all content...")
+    log.info("Starting full scan and conversion of all content...")
     content_dirs = db_manager.discover_content_directories() if db_manager else []
     if not content_dirs:
-        logger.info("No content directories found to process.")
+        log.info("No content directories found to process.")
         return
 
     num_processes = min(cpu_count(), len(content_dirs))
@@ -246,7 +246,7 @@ def scan_and_process_all_content() -> None:
         elif skipped: counts["skipped"] += 1
         else: counts["processed"] += 1
 
-    logger.info(
+    log.info(
         f"Full content scan complete. "
         f"Processed: {counts['processed']}, Skipped: {counts['skipped']}, Errors: {counts['errors']}."
     )
@@ -254,11 +254,11 @@ def scan_and_process_all_content() -> None:
 
 def scan_and_process_all_assets() -> None:
     """Scans and processes all media files, cleaning up orphaned outputs."""
-    logger.info("Starting full scan and conversion of assets...")
+    log.info("Starting full scan and conversion of assets...")
     source_assets_dir = config.ROOT_INDEX_DIR / ".assets"
     
     if not source_assets_dir.is_dir():
-        logger.warning(f"Source assets directory not found: '{source_assets_dir}'")
+        log.warning(f"Source assets directory not found: '{source_assets_dir}'")
         return
 
     source_files = {p for p in source_assets_dir.iterdir() if p.is_file()}
@@ -273,9 +273,9 @@ def scan_and_process_all_assets() -> None:
     source_names = {p.name for p in source_files}
     for output_file in config.ASSETS_OUTPUT_DIR.iterdir():
         if output_file.stem not in source_names:
-            logger.info(f"Deleting orphaned asset '{output_file.name}' as source is missing.")
+            log.info(f"Deleting orphaned asset '{output_file.name}' as source is missing.")
             output_file.unlink(missing_ok=True)
-    logger.info("Full asset scan complete.")
+    log.info("Full asset scan complete.")
 
 
 class ContentChangeHandler(FileSystemEventHandler):
@@ -330,7 +330,7 @@ class ContentChangeHandler(FileSystemEventHandler):
         if not path_to_process:
             return
 
-        logger.debug(f"Watchdog event: {event.event_type} on {event.src_path}")
+        log.debug(f"Watchdog event: {event.event_type} on {event.src_path}")
         
         if type_id == 'asset':
             if event.event_type in (FileDeletedEvent.event_type, DirDeletedEvent.event_type):
@@ -341,7 +341,7 @@ class ContentChangeHandler(FileSystemEventHandler):
                      output_filename = Path(event.src_path).stem + output_map[media_type]
                      output_path = config.ASSETS_OUTPUT_DIR / output_filename
                      if output_path.exists():
-                         logger.info(f"Source asset deleted. Removing converted file: {output_path.name}")
+                         log.info(f"Source asset deleted. Removing converted file: {output_path.name}")
                          output_path.unlink(missing_ok=True)
             else: # File created or modified
                 process_asset_file(path_to_process)
@@ -353,7 +353,7 @@ class ContentChangeHandler(FileSystemEventHandler):
         if event.event_type in (FileDeletedEvent.event_type, DirDeletedEvent.event_type):
             if db_manager:
                 path_key_to_delete = db_manager.get_path_key(Path(event.src_path), subdomain)
-                logger.info(f"Source deleted. Removing page from DB: {path_key_to_delete}")
+                log.info(f"Source deleted. Removing page from DB: {path_key_to_delete}")
                 db_manager.delete_page(path_key_to_delete)
         elif content_dir.is_dir():
             # Use the pool to process the change asynchronously
@@ -374,7 +374,7 @@ def content_converter_process_loop(stop_event: EventType, lock: LockType) -> Non
     init_worker(lock)
     db_manager.initialize_database()
 
-    logger.info("Content processor process started.")
+    log.info("Content processor process started.")
 
     # Perform initial full scan on startup
     scan_and_process_all_content()
@@ -386,22 +386,22 @@ def content_converter_process_loop(stop_event: EventType, lock: LockType) -> Non
         event_handler = ContentChangeHandler(pool)
         observer.schedule(event_handler, str(config.ROOT_INDEX_DIR), recursive=True)
         observer.start()
-        logger.info(f"Watching '{config.ROOT_INDEX_DIR}' for changes...")
+        log.info(f"Watching '{config.ROOT_INDEX_DIR}' for changes...")
         
         try:
             # Main loop: wait for stop event or periodic rescan interval
             while not stop_event.wait(timeout=config.MARKDOWN_SCAN_INTERVAL_SECONDS):
-                logger.debug("Periodic rescan initiated by timer...")
+                log.debug("Periodic rescan initiated by timer...")
                 scan_and_process_all_content()
                 scan_and_process_all_assets()
         except Exception as e:
-            logger.error(f"Unhandled exception in content processor loop: {e}", exc_info=True)
+            log.error(f"Unhandled exception in content processor loop: {e}", exc_info=True)
         finally:
             observer.stop()
             observer.join()
-            logger.info("Content processor observer stopped.")
+            log.info("Content processor observer stopped.")
 
-    logger.info("Content processor process shut down.")
+    log.info("Content processor process shut down.")
 
 if __name__ == "__main__":
     setproctitle.setproctitle("MDWeb - ContentConverter")
@@ -409,7 +409,7 @@ if __name__ == "__main__":
     stop_event = Event()
 
     def handle_shutdown_signal(signum, frame):
-        logger.info(f"Signal {signum} received, shutting down content processor.")
+        log.info(f"Signal {signum} received, shutting down content processor.")
         stop_event.set()
 
     signal.signal(signal.SIGTERM, handle_shutdown_signal)

@@ -5,7 +5,7 @@ from typing import Dict, Any
 
 import src.settings as default_settings
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 class MergedSettings:
@@ -49,12 +49,12 @@ class MergedSettings:
             with self.OVERRIDES_JSON_PATH.open('r') as f:
                 overrides = json.load(f)
 
-            logger.info(f"Loading runtime configuration overrides from {self.OVERRIDES_JSON_PATH}")
+            log.info(f"Loading runtime configuration overrides from {self.OVERRIDES_JSON_PATH}")
             for key, value in overrides.items():
                 if hasattr(self, key):
                     # Security: Only allow overriding whitelisted settings.
                     if key not in self.MODIFIABLE_SETTINGS:
-                        logger.warning(
+                        log.warning(
                             f"Attempted to override non-modifiable setting '{key}'. Ignoring."
                         )
                         continue
@@ -65,11 +65,11 @@ class MergedSettings:
                         setattr(self, key, Path(value))
                     else:
                         setattr(self, key, value)
-                    logger.debug(f"Overridden setting: {key} = {value}")
+                    log.debug(f"Overridden setting: {key} = {value}")
                 else:
-                    logger.warning(f"Override setting '{key}' not found in default settings. Ignoring.")
+                    log.warning(f"Override setting '{key}' not found in default settings. Ignoring.")
         except (json.JSONDecodeError, IOError) as e:
-            logger.error(
+            log.error(
                 f"Failed to load or parse overrides file '{self.OVERRIDES_JSON_PATH}': {e}"
             )
 
@@ -90,17 +90,17 @@ class MergedSettings:
         }
 
         if not filtered_overrides:
-            logger.warning("No modifiable settings provided to save.")
+            log.warning("No modifiable settings provided to save.")
             return
 
         try:
             with self.OVERRIDES_JSON_PATH.open('w') as f:
                 json.dump(filtered_overrides, f, indent=4)
-            logger.info(
+            log.info(
                 f"Configuration overrides saved to {self.OVERRIDES_JSON_PATH}"
             )
         except IOError as e:
-            logger.error(
+            log.error(
                 f"Failed to write to overrides file '{self.OVERRIDES_JSON_PATH}': {e}"
             )
 

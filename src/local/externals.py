@@ -12,7 +12,7 @@ import requests
 
 from src.local.config import effective_settings as config
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 class DependencyManager:
@@ -42,11 +42,11 @@ class DependencyManager:
             match = re.search(dep_info["version_regex"], res.text)
             if match:
                 version = match.group(1)
-                logger.debug(f"Latest version for {dep_info['name']} is {version}.")
+                log.debug(f"Latest version for {dep_info['name']} is {version}.")
                 return version
-            logger.warning(f"Could not parse version from {dep_info['version_url']}")
+            log.warning(f"Could not parse version from {dep_info['version_url']}")
         except (requests.RequestException, IndexError) as e:
-            logger.error(f"Failed to fetch latest version for {dep_info['name']}: {e}")
+            log.error(f"Failed to fetch latest version for {dep_info['name']}: {e}")
         return None
 
     def get_current_versions_for_dir(self, target_dir_name: str) -> Dict[str, str]:
@@ -68,7 +68,7 @@ class DependencyManager:
 
     def _download_file(self, url: str, dest_path: Path):
         """Downloads a file with a simple progress bar."""
-        logger.info(f"Downloading from {url}...")
+        log.info(f"Downloading from {url}...")
         try:
             headers = {"User-Agent": "MyWebApp/1.0"}
             with requests.get(url, stream=True, timeout=30, headers=headers) as r:
@@ -83,10 +83,10 @@ class DependencyManager:
                         sys.stdout.write(f"\r[{'=' * done}{' ' * (50-done)}] {downloaded/1024/1024:.2f} MB")
                         sys.stdout.flush()
             sys.stdout.write("\n")
-            logger.info(f"Successfully downloaded to '{dest_path}'.")
+            log.info(f"Successfully downloaded to '{dest_path}'.")
             return True
         except requests.RequestException as e:
-            logger.error(f"Download failed: {e}")
+            log.error(f"Download failed: {e}")
             if dest_path.exists():
                 dest_path.unlink()
             return False
@@ -100,7 +100,7 @@ class DependencyManager:
         # Use a nested temp directory for the raw extraction to handle different zip structures cleanly
         raw_extract_dir = self.temp_dir / f"_extract_{dep_info['target_dir_name']}"
 
-        logger.info(f"Extracting '{archive_path.name}'...")
+        log.info(f"Extracting '{archive_path.name}'...")
         try:
             with zipfile.ZipFile(archive_path, "r") as zip_ref:
                 zip_ref.extractall(raw_extract_dir)
@@ -117,10 +117,10 @@ class DependencyManager:
                 for item in raw_extract_dir.iterdir():
                     shutil.move(str(item), str(final_extract_path / item.name))
 
-            logger.info(f"Extracted content for {dep_info['name']} is ready in temp directory.")
+            log.info(f"Extracted content for {dep_info['name']} is ready in temp directory.")
             return True
         except (zipfile.BadZipFile, FileNotFoundError, OSError) as e:
-            logger.error(f"Extraction failed: {e}")
+            log.error(f"Extraction failed: {e}")
             return False
         finally:
             if raw_extract_dir.exists():
@@ -163,7 +163,7 @@ class DependencyManager:
 
     def ensure_all_dependencies_installed(self):
         """BLOCKING: Ensures all dependencies are installed, fetching latest versions."""
-        logger.info("--- Ensuring all external dependencies are installed ---")
+        log.info("--- Ensuring all external dependencies are installed ---")
         deps_to_install = []
         for key, info in self.dependencies.items():
             current_versions = self.get_current_versions_for_dir(info["target_dir_name"])
@@ -171,28 +171,28 @@ class DependencyManager:
                 deps_to_install.append(key)
         
         if not deps_to_install:
-            logger.info("All dependencies are already installed.")
+            log.info("All dependencies are already installed.")
             return True
 
         for key in deps_to_install:
             info = self.dependencies[key]
-            logger.info(f"Installing {info['name']} for the first time...")
+            log.info(f"Installing {info['name']} for the first time...")
             latest_version = self._get_latest_version(key)
             if not latest_version:
-                logger.critical(f"Could not get latest version for {info['name']}. Cannot proceed.")
+                log.critical(f"Could not get latest version for {info['name']}. Cannot proceed.")
                 return False
             if not self._install_dependency(key, latest_version):
-                logger.critical(f"Installation failed for {info['name']}.")
+                log.critical(f"Installation failed for {info['name']}.")
                 return False
         
         # After all downloads are complete, apply them from the temp directory
-        logger.info("Applying initial installations...")
+        log.info("Applying initial installations...")
         self.apply_pending_installs()
         return True
 
     def check_for_updates_async(self):
         """NON-BLOCKING: Checks for updates and downloads them to the .temp folder for next restart."""
-        logger.info("Starting background check for dependency updates...")
+        log.info("Starting background check for dependency updates...")
         
         updates_found = False
         for key, info in self.dependencies.items():
@@ -205,25 +205,25 @@ class DependencyManager:
                 continue
 
             updates_found = True
-            logger.info(f"UPDATE FOUND for {info['name']}: {current_v} -> {latest_v}. Downloading...")
+            log.info(f"UPDATE FOUND for {info['name']}: {current_v} -> {latest_v}. Downloading...")
             if not self._install_dependency(key, latest_v):
-                logger.error(f"Failed to download update for {info['name']}.")
+                log.error(f"Failed to download update for {info['name']}.")
         
         if updates_found:
-            logger.warning("Updates have been downloaded. Restart the application to apply them.")
-        logger.info("Background update check finished.")
+            log.warning("Updates have been downloaded. Restart the application to apply them.")
+        log.info("Background update check finished.")
 
     def apply_pending_installs(self):
         """Checks for and applies updates/installs from the .temp directory."""
         if not self.temp_dir.is_dir() or not any(self.temp_dir.iterdir()):
             return
 
-        logger.warning("Pending dependency installations found. Applying now...")
+        log.warning("Pending dependency installations found. Applying now...")
         for item in self.temp_dir.iterdir():
             if not item.is_dir(): continue
             
             target_dir_name = item.name
-            logger.info(f"Applying changes for '{target_dir_name}'...")
+            log.info(f"Applying changes for '{target_dir_name}'...")
             
             # For shared directories, we need to merge, not replace.
             is_shared = sum(1 for d in self.dependencies.values() if d['target_dir_name'] == target_dir_name) > 1
@@ -239,12 +239,12 @@ class DependencyManager:
                 final_dir = self.external_dir / target_dir_name
                 shutil.move(str(item), str(final_dir))
             
-            logger.info(f"Changes for '{target_dir_name}' applied successfully.")
+            log.info(f"Changes for '{target_dir_name}' applied successfully.")
 
         # Clean up the temp directory
         shutil.rmtree(self.temp_dir)
         self.temp_dir.mkdir(exist_ok=True) # Recreate for next run
-        logger.warning("All pending installations applied.")
+        log.warning("All pending installations applied.")
 
     def _archive_current_version(self, target_dir_name: str):
         """Moves the current version of a dependency directory to the .old directory."""
@@ -263,11 +263,11 @@ class DependencyManager:
         if archive_path.exists():
             shutil.rmtree(archive_path)
 
-        logger.info(f"Archiving current '{target_dir_name}' to '{archive_path}'.")
+        log.info(f"Archiving current '{target_dir_name}' to '{archive_path}'.")
         try:
             shutil.move(str(target_dir), str(archive_path))
         except OSError as e:
-            logger.error(f"Failed to archive current version: {e}")
+            log.error(f"Failed to archive current version: {e}")
             return False
         return True
 
