@@ -83,6 +83,9 @@ config:
   layout: elk
   elk:
     nodePlacementStrategy: BRANDES_KOEPF
+  theme: base
+  themeVariables:
+    primaryTextColor: '#000'
 ---
 
 graph LR
@@ -178,6 +181,9 @@ config:
   layout: elk
   elk:
     nodePlacementStrategy: BRANDES_KOEPF
+  theme: base
+  themeVariables:
+    primaryTextColor: '#000'
 ---
 
 graph TD
