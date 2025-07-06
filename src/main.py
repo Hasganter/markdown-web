@@ -8,12 +8,6 @@ import psutil
 from pathlib import Path
 from typing import List
 
-# --- Global State ---
-VERBOSE_LOGGING = False
-stop_log_listener = threading.Event()
-current_overrides: dict = {}
-CONSOLE_LOCK = threading.Lock()
-
 # Basic console logger for messages BEFORE full setup is complete.
 # This logger will be replaced by the full setup later.
 logging.basicConfig(
@@ -22,6 +16,13 @@ logging.basicConfig(
     stream=sys.stdout
 )
 logger = logging.getLogger("console")
+
+from src.local.config import effective_settings as config
+from src.local.database import LogDBManager
+from src.local.manager import ProcessManager
+from src.local.externals import DependencyManager
+from src.log.export import export_logs_to_excel
+from src.log.setup import setup_logging
 
 # --- Platform-specific non-blocking keypress detection ---
 try:
@@ -48,24 +49,13 @@ except ImportError:
         finally:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-# --- Deferred imports after initial state and functions are defined ---
-from src.local.config import effective_settings as config
-from src.local.database import LogDBManager
-from src.local.manager import ProcessManager
-from src.local.externals import DependencyManager
-from src.log.export import export_logs_to_excel
-from src.log.setup import setup_logging
-
-# Instantiate managers after imports
+# --- Global State ---
+VERBOSE_LOGGING = False
+CONSOLE_LOCK = threading.Lock()
+stop_log_listener = threading.Event()
+current_overrides: dict = {}
 process_manager = ProcessManager()
 
-class ListHandler(logging.Handler):
-    """A logging handler that collects log records into a list."""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.records: List[str] = []
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(self.format(record))
 
 def load_current_overrides() -> None:
     """
@@ -248,6 +238,8 @@ def handle_logs_command() -> None:
     try:
         # Use the manager method to fetch logs.
         for log in log_db.fetch_last_entries(config.LOG_HISTORY_COUNT):
+            if log.level == logging.DEBUG and not VERBOSE_LOGGING:
+                continue
             print(log.message)
             last_ts = max(last_ts, log.timestamp)
     except Exception as e:
@@ -261,6 +253,8 @@ def handle_logs_command() -> None:
             # Use the manager method to listen for updates.
             new_logs, last_ts = log_db.listen_for_updates(last_ts)
             for log in new_logs:
+                if log.level == logging.DEBUG and not VERBOSE_LOGGING:
+                    continue
                 print(log.message)
             time.sleep(1) # Poll interval
         clear_keypress_buffer()
