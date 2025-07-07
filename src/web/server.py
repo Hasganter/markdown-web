@@ -34,7 +34,7 @@ class DDoSMiddleware(BaseHTTPMiddleware):
         self._ip_requests: Dict[str, Deque[float]] = {}
         self._blocked_ips: Dict[str, float] = {}
         # Start a background task for periodic cleanup
-        asyncio.create_task(self._periodic_cleanup())
+        self.cleanup_task = asyncio.create_task(self._periodic_cleanup())
 
     async def _periodic_cleanup(self):
         """Periodically cleans up expired IPs to prevent memory leaks."""

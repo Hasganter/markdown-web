@@ -73,7 +73,7 @@ class LokiHandler(logging.Handler):
 
             log_entry = {
                 "stream": {
-                    "job": f"python-app",
+                    "job": "python-app",
                     "level": record.levelname.lower(),
                     "hostname": self.hostname,
                     "logger": logger_name,
@@ -215,18 +215,18 @@ class SQLiteHandler(logging.Handler):
         # even if they are not part of a standard LogRecord.
         if record.name.startswith('proc.'):
             module = record.name.split('.')[-1]
-            funcName = 'stdout' if record.levelno == logging.INFO else 'stderr'
+            func_name = 'stdout' if record.levelno == logging.INFO else 'stderr'
             lineno = 0
         else:
             module = record.module
-            funcName = record.funcName
+            func_name = record.funcName
             lineno = record.lineno
 
         log_entry = {
             "timestamp": record.created,
             "level": record.levelname,
             "module": module,
-            "funcName": funcName,
+            "funcName": func_name,
             "lineno": lineno,
             "message": record.getMessage()
         }

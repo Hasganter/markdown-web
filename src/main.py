@@ -72,86 +72,105 @@ def load_current_overrides() -> None:
     else:
         current_overrides = {}
 
+def _config_show():
+    """Displays the current configuration settings and their sources."""
+    print("\n--- Current Application Configuration ---")
+    print("Settings are shown as: KEY = VALUE (Source: Default/Override)")
+    # Reload from disk to show the true current state
+    load_current_overrides()
+    for key in sorted(config.MODIFIABLE_SETTINGS):
+        if not hasattr(config, key):
+            continue  # Skip if the setting does not exist in the config object
+        value = getattr(config, key)
+        source = "Override" if key in current_overrides else "Default"
+        print(f"  {key} = {value} (Source: {source})")
+    print("---")
+    print("Use 'config set <KEY> <VALUE>' to change a setting for the current session.")
+    print("Use 'config save' to persist session changes.")
+    print("---------------------------------------\n")
+
+def _config_set(args: List[str]):
+    """Sets a configuration setting for the current session."""
+    global current_overrides
+    if len(args) < 2:
+        print("Usage: config set <SETTING_NAME> <VALUE>")
+        return
+    key, value_str = args[0].upper(), " ".join(args[1:])
+
+    if key not in config.MODIFIABLE_SETTINGS:
+        print(f"Error: '{key}' is not a modifiable setting or does not exist.")
+        return
+
+    if not hasattr(config, key):
+        # This check is somewhat redundant due to the one above but is good practice.
+        print(f"Error: Setting '{key}' not found in configuration.")
+        return
+
+    original_value = getattr(config, key)
+    try:
+        # Handle boolean conversion gracefully
+        if isinstance(original_value, bool):
+            new_value = value_str.lower() in ('true', '1', 't', 'yes', 'y')
+        else:
+            new_value = type(original_value)(value_str)
+
+        current_overrides[key] = new_value
+        setattr(config, key, new_value) # Apply change to current session
+        print(f"Set '{key}' to '{new_value}'. This change is temporary.")
+        print("Use 'config save' to make it permanent (requires restart to apply fully).")
+    except (ValueError, TypeError):
+        err_msg = (f"Error: Could not convert '{value_str}' to the required type "
+                  f"({type(original_value).__name__}).")
+        print(err_msg)
+
+def _config_save():
+    """Saves the current overrides to the JSON file."""
+    global current_overrides
+    if not current_overrides:
+        print("No temporary overrides to save.")
+        return
+    config.save_overrides(current_overrides)
+    print("Overrides saved to bin/overrides.json.")
+    print("A restart is required for changes to take full effect.")
+
+def _config_load():
+    """Reloads the overrides from the JSON file."""
+    load_current_overrides()
+    # To apply, settings object needs to be re-initialized, which means restart.
+    print("Reloaded overrides from file. A restart is required to apply them.")
+
+def _config_help():
+    """Displays help for the config command."""
+    print("\nConfig Command Help:")
+    print("  config show                - Display all modifiable settings and their source.")
+    print("  config set KEY VALUE       - Temporarily change a setting for the current session.")
+    print("  config save                - Save temporary changes to bin/overrides.json.")
+    print("  config load                - Reload overrides from the file (requires restart).")
+    print("  config help                - Show this help message.")
+    print("Use 'check-config' to validate external binary paths.")
+
 def handle_config_command(args: List[str]) -> None:
     """
     Handles all sub-commands for the 'config' command-line interface.
 
     :param args: A list of string arguments following the 'config' command.
     """
-    global current_overrides
     if not args:
         print("Usage: config <show|set|save|load|help>")
         return
 
     sub_command = args[0].lower()
-
-    if sub_command == "show":
-        print("\n--- Current Application Configuration ---")
-        print("Settings are shown as: KEY = VALUE (Source: Default/Override)")
-        # Reload from disk to show the true current state
-        load_current_overrides()
-        for key in sorted(config.MODIFIABLE_SETTINGS):
-            if hasattr(config, key):
-                value = getattr(config, key)
-                source = "Override" if key in current_overrides else "Default"
-                print(f"  {key} = {value} (Source: {source})")
-        print("---")
-        print("Use 'config set <KEY> <VALUE>' to change a setting for the current session.")
-        print("Use 'config save' to persist session changes.")
-        print("---------------------------------------\n")
-
-    elif sub_command == "set":
-        if len(args) < 3:
-            print("Usage: config set <SETTING_NAME> <VALUE>")
-            return
-        key, value_str = args[1].upper(), " ".join(args[2:])
-
-        if key not in config.MODIFIABLE_SETTINGS:
-            print(f"Error: '{key}' is not a modifiable setting or does not exist.")
-            return
-        if not hasattr(config, key):
-            # This check is somewhat redundant due to the one above but is good practice.
-            print(f"Error: Setting '{key}' not found in configuration.")
-            return
-
-        original_value = getattr(config, key)
-        try:
-            # Handle boolean conversion gracefully
-            if isinstance(original_value, bool):
-                new_value = value_str.lower() in ('true', '1', 't', 'yes', 'y')
-            else:
-                new_value = type(original_value)(value_str)
-
-            current_overrides[key] = new_value
-            setattr(config, key, new_value) # Apply change to current session
-            print(f"Set '{key}' to '{new_value}'. This change is temporary.")
-            print("Use 'config save' to make it permanent (requires restart to apply fully).")
-        except (ValueError, TypeError):
-            err_msg = (f"Error: Could not convert '{value_str}' to the required type "
-                       f"({type(original_value).__name__}).")
-            print(err_msg)
-
-    elif sub_command == "save":
-        if not current_overrides:
-            print("No temporary overrides to save.")
-            return
-        config.save_overrides(current_overrides)
-        print("Overrides saved to bin/overrides.json.")
-        print("A restart is required for changes to take full effect.")
-
-    elif sub_command == "load":
-        load_current_overrides()
-        # To apply, settings object needs to be re-initialized, which means restart.
-        print("Reloaded overrides from file. A restart is required to apply them.")
-
+    sub_command_map = {
+        "show": _config_show(),
+        "set": _config_set(args),
+        "save": _config_save(),
+        "load": _config_load(),
+        "help": _config_help()
+    }
+    if sub_command in sub_command_map:
+        sub_command_map[sub_command]()
     else:
-        print("\nConfig Command Help:")
-        print("  config show                - Display all modifiable settings and their source.")
-        print("  config set KEY VALUE       - Temporarily change a setting for the current session.")
-        print("  config save                - Save temporary changes to bin/overrides.json.")
-        print("  config load                - Reload overrides from the file (requires restart).")
-        print("  config help                - Show this help message.")
-        print("Use 'check-config' to validate external binary paths.")
+        print(f"Unknown config sub-command: '{sub_command}'. Type 'config help' for available commands.")
 
 def handle_recover_command(args: List[str]):
     """Handles the 'recover' command for dependencies."""
@@ -261,6 +280,7 @@ def handle_logs_command() -> None:
         print("\n--- Log tailing stopped. Returning to console. ---")
     except (KeyboardInterrupt, SystemExit):
         print("\n--- Log tailing interrupted. Returning to console. ---")
+        raise
     except Exception as e:
         log.error(f"An error occurred during log tailing: {e}", exc_info=True)
 

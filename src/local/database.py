@@ -313,26 +313,30 @@ class ContentDBManager:
         tasks = []
         root_dir = config.ROOT_INDEX_DIR
         
-        # Main domain content
-        for item in root_dir.iterdir():
-            if item.is_dir() and not item.name.startswith('.'):
-                tasks.append((item, None)) # Top-level folder
-                # Recursively find all subdirectories
-                tasks.extend([(p, None) for p in item.rglob("*") if p.is_dir()])
         # Add root index itself if it has a content file
         if any((root_dir / f).exists() for f in ["index.md", "index.html"]):
              tasks.append((root_dir, None))
 
-        # Subdomain content
+        # Process all directories
         for item in root_dir.iterdir():
-            if item.is_dir() and item.name.startswith('.') and item.name != ".assets":
-                subdomain_name = item.name[1:]
-                # Add subdomain root itself
-                tasks.append((item, subdomain_name))
-                # Recursively find all subdirectories within the subdomain
-                tasks.extend([(p, subdomain_name) for p in item.rglob("*") if p.is_dir()])
+            if not item.is_dir():
+                continue
+                
+            if item.name.startswith('.'):
+                # Subdomain content (skip .assets)
+                if item.name != ".assets":
+                    subdomain_name = item.name[1:]
+                    # Add subdomain root itself
+                    tasks.append((item, subdomain_name))
+                    # Recursively find all subdirectories within the subdomain
+                    tasks.extend([(p, subdomain_name) for p in item.rglob("*") if p.is_dir()])
+            else:
+                # Main domain content
+                tasks.append((item, None)) # Top-level folder
+                # Recursively find all subdirectories
+                tasks.extend([(p, None) for p in item.rglob("*") if p.is_dir()])
         
-        return sorted(list(set(tasks)), key=lambda x: str(x[0]))
+        return sorted(set(tasks), key=lambda x: str(x[0]))
 
     def get_canonical_content_file(self, dir_path: Path, subdomain: Optional[str]) -> Optional[Path]:
         """

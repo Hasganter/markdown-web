@@ -7,7 +7,6 @@ import time
 import zipfile
 from pathlib import Path
 from typing import Dict, Any
-
 import requests
 
 from src.local.config import effective_settings as config
@@ -119,7 +118,7 @@ class DependencyManager:
 
             log.info(f"Extracted content for {dep_info['name']} is ready in temp directory.")
             return True
-        except (zipfile.BadZipFile, FileNotFoundError, OSError) as e:
+        except (zipfile.BadZipFile, OSError) as e:
             log.error(f"Extraction failed: {e}")
             return False
         finally:
@@ -302,7 +301,7 @@ class DependencyManager:
         confirm1 = input("This will replace the currently installed version. Are you sure? (y/N): ").lower()
         if confirm1 != 'y': print("Recovery cancelled."); return
 
-        confirm2 = input(f"Please type 'recover' to confirm this irreversible action: ")
+        confirm2 = input("Please type 'recover' to confirm this irreversible action: ")
         if confirm2 != 'recover': print("Confirmation failed. Recovery cancelled."); return
 
         print("\nProceeding with recovery...")

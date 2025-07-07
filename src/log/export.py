@@ -26,20 +26,13 @@ def escape_formula(value: Any) -> Any:
         return f"'{value}"
     return value
 
-def export_logs_to_excel(db_path: Path, output_path: Path) -> None:
+def get_logs_from_database(db_path: Path) -> pd.DataFrame:
     """
-    Exports log entries from the SQLite database to a styled Excel file.
-
-    Features include auto-sized columns, conditional row coloring based on log level,
-    and protection against Excel formula injection.
-
+    Retrieve log data from the SQLite database.
+    
     :param db_path: The file path to the SQLite database.
-    :param output_path: The file path where the Excel file will be saved.
+    :return: DataFrame with log entries or None if an error occurred.
     """
-    if not db_path.exists():
-        print(f"Error: Database file not found at '{db_path}'")
-        return
-
     print(f"Connecting to database: {db_path}")
     try:
         with sqlite3.connect(db_path) as con:
@@ -55,62 +48,126 @@ def export_logs_to_excel(db_path: Path, output_path: Path) -> None:
             """
             df = pd.read_sql_query(query, con)
             print(f"Read {len(df)} log entries from the database.")
+            return df
     except (sqlite3.Error, pd.errors.DatabaseError) as e:
         print(f"An error occurred while reading the database: {e}")
-        return
+        return None
 
-    if df.empty:
-        print("No log entries to export.")
-        return
-
-    # Sanitize data to prevent formula injection
+def sanitize_log_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sanitize data to prevent Excel formula injection.
+    
+    :param df: DataFrame with log entries.
+    :return: Sanitized DataFrame.
+    """
     print("Sanitizing data to prevent Excel formula errors...")
     for col in ['Module', 'Func Source', 'Message']:
         df[col] = df[col].apply(escape_formula)
+    return df
 
+def style_header(ws):
+    """
+    Apply styling to the header row.
+    
+    :param ws: Excel worksheet.
+    """
+    for cell in ws[1]:
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+
+def apply_row_styling(ws, level_col_idx: int):
+    """
+    Apply conditional formatting based on log level.
+    
+    :param ws: Excel worksheet.
+    :param level_col_idx: Index of the log level column.
+    """
+    fill_map = {
+        'WARNING': YELLOW_FILL,
+        'ERROR': RED_FILL,
+        'CRITICAL': RED_FILL,
+        'FATAL': RED_FILL,
+        'DEBUG': BLUE_FILL
+    }
+    
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        log_level = row[level_col_idx - 1].value
+        fill_to_apply = fill_map.get(log_level)
+        if fill_to_apply:
+            for cell in row:
+                cell.fill = fill_to_apply
+        
+        # Apply text format to all but the timestamp column
+        for cell in row[1:]:
+            cell.number_format = TEXT_FORMAT
+
+def adjust_column_widths(ws):
+    """
+    Auto-adjust column widths based on content.
+    
+    :param ws: Excel worksheet.
+    """
+    column_widths = {}
+    for row in ws.iter_rows():
+        for i, cell in enumerate(row):
+            if cell.value:
+                column_widths[i] = max(column_widths.get(i, 0), len(str(cell.value)))
+    
+    for i, width in column_widths.items():
+        ws.column_dimensions[ws.cell(row=1, column=i + 1).column_letter].width = width + 2
+
+def write_to_excel(df: pd.DataFrame, output_path: Path) -> bool:
+    """
+    Write data to Excel with styling.
+    
+    :param df: DataFrame with log entries.
+    :param output_path: Path where Excel file will be saved.
+    :return: True if successful, False otherwise.
+    """
     print(f"Writing data to Excel file: {output_path}")
     try:
-        # Use openpyxl directly for more control over styling
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Logs')
             ws = writer.sheets['Logs']
 
-            # Style header
-            for cell in ws[1]:
-                cell.font = HEADER_FONT
-                cell.fill = HEADER_FILL
-
-            # Style rows and set data types
+            # Apply styling
+            style_header(ws)
             level_col_idx = df.columns.get_loc('Log Level') + 1
-            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-                log_level = row[level_col_idx - 1].value
-                fill_map = {
-                    'WARNING': YELLOW_FILL,
-                    'ERROR': RED_FILL,
-                    'CRITICAL': RED_FILL,
-                    'FATAL': RED_FILL,
-                    'DEBUG': BLUE_FILL
-                }
-                fill_to_apply = fill_map.get(log_level)
-                if fill_to_apply:
-                    for cell in row:
-                        cell.fill = fill_to_apply
-                
-                # Apply text format to all but the timestamp column
-                for cell in row[1:]:
-                    cell.number_format = TEXT_FORMAT
-
-            # Auto-adjust column widths
-            column_widths = {}
-            for row in ws.iter_rows():
-                for i, cell in enumerate(row):
-                    if cell.value:
-                        column_widths[i] = max(column_widths.get(i, 0), len(str(cell.value)))
-            
-            for i, width in column_widths.items():
-                ws.column_dimensions[ws.cell(row=1, column=i + 1).column_letter].width = width + 2
+            apply_row_styling(ws, level_col_idx)
+            adjust_column_widths(ws)
 
         print("\nExport successful!")
         print(f"File saved to: {output_path.resolve()}")
+        return True
     except Exception as e:
         print(f"An error occurred while writing or styling the Excel file: {e}")
+        return False
+
+def export_logs_to_excel(db_path: Path, output_path: Path) -> None:
+    """
+    Exports log entries from the SQLite database to a styled Excel file.
+
+    Features include auto-sized columns, conditional row coloring based on log level,
+    and protection against Excel formula injection.
+
+    :param db_path: The file path to the SQLite database.
+    :param output_path: The file path where the Excel file will be saved.
+    """
+    if not db_path.exists():
+        print(f"Error: Database file not found at '{db_path}'")
+        return
+
+    # Get data from database
+    df = get_logs_from_database(db_path)
+    if df is None:
+        return
+        
+    if df.empty:
+        print("No log entries to export.")
+        return
+
+    # Sanitize data
+    df = sanitize_log_data(df)
+
+    # Write to Excel with styling
+    write_to_excel(df, output_path)

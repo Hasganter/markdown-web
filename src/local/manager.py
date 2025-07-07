@@ -254,7 +254,7 @@ class ProcessManager:
             # Store the psutil.Process object for supervision.
             self.running_procs[name] = psutil.Process(p.pid)
             log.info(f"{name.capitalize()} started successfully with PID: {p.pid}")
-        except (FileNotFoundError, ValueError, Exception) as e:
+        except Exception as e:
             log.critical(f"Failed to start process '{name}': {e}", exc_info=True)
             raise
 
@@ -276,6 +276,102 @@ class ProcessManager:
         log.critical(f"ASGI server did not become available after {ASGI_HEALTH_CHECK_TIMEOUT} seconds.")
         return False
 
+    def _check_if_already_running(self) -> bool:
+        """Check if the application is already running based on PID file.
+        
+        :return: True if already running, False otherwise
+        """
+        pid_info = self.get_pid_info()
+        if pid_info and any(psutil.pid_exists(p) for p in pid_info.values()):
+            log.error("Application appears to be running. Use 'stop' or 'restart'.")
+            return True
+        return False
+    
+    def _setup_initial_environment(self) -> bool:
+        """Sets up the initial environment including dependencies.
+        
+        :return: True if setup was successful, False otherwise
+        """
+        # Dependencies check and installation
+        is_first_run = not any(p.is_dir() for p in config.EXTERNAL_DIR.iterdir() if not p.name.startswith('.'))
+        if is_first_run:
+            log.warning("External dependency directory is empty. Running initial installation...")
+            if not self.dependency_manager.ensure_all_dependencies_installed():
+                log.critical("Dependency installation failed. Cannot start application.")
+                return False
+            log.info("Initial dependency installation complete.")
+        
+        self.dependency_manager.apply_pending_installs()
+        self.write_config_files()
+        self.log_db_manager.initialize_database()
+        return True
+
+    def _perform_initial_content_processing(self) -> None:
+        """Performs the initial content and asset scan."""
+        log.info("--- Performing initial blocking content and asset scan ---")
+        db_lock = Lock()
+        # The content converter process needs its own DB manager instance and a lock.
+        init_content_worker(db_lock)
+        self.content_db_manager.initialize_database()
+        scan_and_process_all_content()
+        scan_and_process_all_assets()
+        log.info("--- Initial blocking scan complete. Starting background processes. ---")
+
+    def _start_nginx_log_tailing(self) -> None:
+        """Starts a thread to tail the Nginx access log file."""
+        nginx_log_path = config.BIN_DIR / "logs" / "access.log"
+        self.stop_tailing_event.clear()  # Reset event for this run
+        tail_thread = threading.Thread(
+            target=self._tail_nginx_log_file,
+            args=(nginx_log_path,),
+            daemon=True,
+            name="NginxLogTailerThread"
+        )
+        tail_thread.start()
+
+    def _start_processes(self) -> bool:
+        """Starts all application processes in the correct order.
+        
+        :return: True if all processes started successfully, False otherwise
+        """
+        process_launch_order = [
+            ("loki", config.LOKI_ENABLED),
+            ("alloy", config.LOKI_ENABLED),
+            ("content_converter", True),
+            ("asgi_server", True),
+            ("ngrok", config.NGROK_ENABLED),
+            ("nginx", True),
+            ("supervisor", True),
+        ]
+        
+        for name, is_enabled in process_launch_order:
+            if not is_enabled:
+                continue
+            
+            self._launch_process(name)
+            
+            # Give server processes a moment to initialize before health checks.
+            if name in ("asgi_server", "nginx", "loki"):
+                time.sleep(1)
+
+            # Specific post-launch steps
+            if name == "asgi_server" and not self._wait_for_asgi_server():
+                raise RuntimeError("ASGI server health check failed.")
+                
+            if name == "nginx":
+                self._start_nginx_log_tailing()
+        
+        return True
+
+    def _start_update_checker(self) -> None:
+        """Starts a thread to check for dependency updates."""
+        update_thread = threading.Thread(
+            target=self.dependency_manager.check_for_updates_async,
+            daemon=True,
+            name="DepUpdateCheckThread"
+        )
+        update_thread.start()
+
     def start_all(self, verbose: bool = False) -> bool:
         """
         Starts all application processes as a cohesive background suite.
@@ -283,8 +379,7 @@ class ProcessManager:
         :param verbose: If True, sets console logging to DEBUG level.
         :return bool: True on successful startup, False on failure.
         """
-        if self.get_pid_info() and any(psutil.pid_exists(p) for p in self.get_pid_info().values()):
-            log.error("Application appears to be running. Use 'stop' or 'restart'.")
+        if self._check_if_already_running():
             return False
 
         # Set up logging with desired verbosity for the startup sequence
@@ -294,73 +389,21 @@ class ProcessManager:
         log.info("=" * 20 + " Application Starting " + "=" * 20)
         self.running_procs.clear()
 
-        # Dependencies check and installation
-        is_first_run = not any(p.is_dir() for p in config.EXTERNAL_DIR.iterdir() if not p.name.startswith('.'))
-        if is_first_run:
-            log.warning("External dependency directory is empty. Running initial installation...")
-            if not self.dependency_manager.ensure_all_dependencies_installed():
-                log.critical("Dependency installation failed. Cannot start application.")
-                return False
-            log.info("Initial dependency installation complete.")
-
-
         try:
-            self.dependency_manager.apply_pending_installs()
-            self.write_config_files()
-            self.log_db_manager.initialize_database()
-
-            log.info("--- Performing initial blocking content and asset scan ---")
-            db_lock = Lock()
-            # The content converter process needs its own DB manager instance and a lock.
-            init_content_worker(db_lock)
-            self.content_db_manager.initialize_database()
-            scan_and_process_all_content()
-            scan_and_process_all_assets()
-            log.info("--- Initial blocking scan complete. Starting background processes. ---")
-
-            process_launch_order = [
-                ("loki", config.LOKI_ENABLED),
-                ("alloy", config.LOKI_ENABLED),
-                ("content_converter", True),
-                ("asgi_server", True),
-                ("ngrok", config.NGROK_ENABLED),
-                ("nginx", True),
-                ("supervisor", True),
-            ]
-            for name, is_enabled in process_launch_order:
-                if not is_enabled:
-                    continue
+            # Setup initial environment
+            if not self._setup_initial_environment():
+                return False
                 
-                self._launch_process(name)
-                # Give server processes a moment to initialize before health checks.
-                if name in ("asgi_server", "nginx", "loki"):
-                    time.sleep(1)
-
-                if name == "asgi_server":
-                    if not self._wait_for_asgi_server():
-                        raise RuntimeError("ASGI server health check failed.")
-
-                # After Nginx starts, launch the thread to tail its access log file.
-                if name == "nginx":
-                    nginx_log_path = config.BIN_DIR / "logs" / "access.log"
-                    self.stop_tailing_event.clear() # Reset event for this run
-                    tail_thread = threading.Thread(
-                        target=self._tail_nginx_log_file,
-                        args=(nginx_log_path,),
-                        daemon=True,
-                        name="NginxLogTailerThread"
-                    )
-                    tail_thread.start()
-
+            # Perform initial content processing
+            self._perform_initial_content_processing()
+            
+            # Start all processes
+            self._start_processes()
+            
+            # Write PID file and start update checker
             self._write_pid_file()
             log.info("All application processes started successfully.")
-
-            update_thread = threading.Thread(
-                target=self.dependency_manager.check_for_updates_async,
-                daemon=True,
-                name="DepUpdateCheckThread"
-            )
-            update_thread.start()
+            self._start_update_checker()
             
             return True
         except Exception as e:
@@ -368,17 +411,13 @@ class ProcessManager:
             self.stop_all(is_cleanup_after_failure=True)
             return False
 
-    def stop_all(self, is_cleanup_after_failure: bool = False) -> None:
+    def _identify_processes_to_stop(self, is_cleanup_after_failure: bool) -> Set[psutil.Process]:
         """
-        Stops all managed application processes gracefully, including children.
-    
+        Identifies all parent and child processes that need to be stopped.
+        
         :param is_cleanup_after_failure: If True, uses internal state instead of PID file.
+        :return: Set of all processes to stop
         """
-        self.stop_tailing_event.set()
-        self.shutdown_signal_received.set()
-        config.SHUTDOWN_SIGNAL_PATH.touch()
-    
-        # --- Stage 1: Identify all processes to be stopped ---
         parent_procs: Set[psutil.Process] = set()
         if is_cleanup_after_failure:
             parent_procs = {p for p in self.running_procs.values() if p.is_running()}
@@ -386,7 +425,7 @@ class ProcessManager:
         else:
             pid_info = self.get_pid_info() or {}
             parent_procs = {psutil.Process(pid) for pid in pid_info.values() if psutil.pid_exists(pid)}
-    
+        
         # Add Hypercorn master process from its specific PID file, if it exists
         hypercorn_pid_path = config.BIN_DIR / "hypercorn.pid"
         if hypercorn_pid_path.exists():
@@ -397,7 +436,7 @@ class ProcessManager:
                     parent_procs.add(psutil.Process(master_pid))
             except (ValueError, IOError, psutil.Error) as e:
                 log.error(f"Could not read or use Hypercorn PID file: {e}")
-    
+        
         # Recursively find all children of all parent processes
         all_procs_to_stop: Set[psutil.Process] = set(parent_procs)
         for proc in parent_procs:
@@ -407,17 +446,12 @@ class ProcessManager:
                     log.debug(f"Found {len(children)} child process(es) for {proc.name()} (PID {proc.pid}).")
                     all_procs_to_stop.update(children)
             except psutil.NoSuchProcess:
-                continue # Parent died before we could check for children
+                continue  # Parent died before we could check for children
+                
+        return all_procs_to_stop
     
-        if not all_procs_to_stop:
-            log.info("No running application processes found to stop.")
-            self._cleanup_shutdown_files()
-            return
-    
-        log.info(f"Initiating graceful shutdown for {len(all_procs_to_stop)} total processes (parents and children)...")
-    
-        # --- Stage 2: Graceful Shutdown ---
-        # Send Nginx 'quit' command for graceful shutdown
+    def _shutdown_nginx_gracefully(self) -> None:
+        """Sends the 'quit' signal to Nginx for graceful shutdown."""
         try:
             nginx_exe = get_executable_path(config.NGINX_EXECUTABLE_PATH)
             cmd = [str(nginx_exe.resolve()), '-s', 'quit', '-p', str(config.BIN_DIR.resolve())]
@@ -426,8 +460,13 @@ class ProcessManager:
         except Exception as e:
             log.error(f"Failed to send graceful quit signal to Nginx: {e}")
     
-        # Terminate all other processes (SIGTERM)
-        for proc in all_procs_to_stop:
+    def _terminate_processes(self, processes: Set[psutil.Process]) -> None:
+        """
+        Sends SIGTERM to all processes except Nginx.
+        
+        :param processes: Set of processes to terminate
+        """
+        for proc in processes:
             try:
                 if 'nginx' not in proc.name().lower():
                     log.debug(f"Sending SIGTERM to {proc.name()} (PID {proc.pid})")
@@ -435,7 +474,48 @@ class ProcessManager:
             except psutil.NoSuchProcess:
                 continue
     
-        # --- Stage 3: Wait and Verify ---
+    def _forceful_kill(self, processes: list) -> None:
+        """
+        Forcefully kills processes that didn't terminate gracefully.
+        
+        :param processes: List of processes to kill
+        """
+        if not processes:
+            return
+            
+        log.warning(f"{len(processes)} processes did not terminate gracefully. Forcing shutdown...")
+        for proc in processes:
+            try:
+                log.warning(f"Killing stubborn process {proc.name()} (PID {proc.pid}).")
+                proc.kill()
+            except psutil.NoSuchProcess:
+                pass
+    
+    def stop_all(self, is_cleanup_after_failure: bool = False) -> None:
+        """
+        Stops all managed application processes gracefully, including children.
+    
+        :param is_cleanup_after_failure: If True, uses internal state instead of PID file.
+        """
+        self.stop_tailing_event.set()
+        self.shutdown_signal_received.set()
+        config.SHUTDOWN_SIGNAL_PATH.touch()
+        
+        # Identify processes to stop
+        all_procs_to_stop = self._identify_processes_to_stop(is_cleanup_after_failure)
+        
+        if not all_procs_to_stop:
+            log.info("No running application processes found to stop.")
+            self._cleanup_shutdown_files()
+            return
+        
+        log.info(f"Initiating graceful shutdown for {len(all_procs_to_stop)} total processes (parents and children)...")
+        
+        # Gracefully shutdown processes
+        self._shutdown_nginx_gracefully()
+        self._terminate_processes(all_procs_to_stop)
+        
+        # Wait and verify
         procs_list = list(all_procs_to_stop)
         try:
             gone, alive = psutil.wait_procs(procs_list, timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
@@ -443,17 +523,10 @@ class ProcessManager:
                 log.debug(f"Process {proc.name()} (PID {proc.pid}) terminated gracefully.")
         except psutil.TimeoutExpired:
             alive = procs_list
-    
-        # --- Stage 4: Forceful Shutdown (Kill) ---
-        if alive:
-            log.warning(f"{len(alive)} processes did not terminate gracefully. Forcing shutdown...")
-            for proc in alive:
-                try:
-                    log.warning(f"Killing stubborn process {proc.name()} (PID {proc.pid}).")
-                    proc.kill()
-                except psutil.NoSuchProcess:
-                    pass
-    
+        
+        # Forceful shutdown if needed
+        self._forceful_kill(alive)
+        
         self._cleanup_shutdown_files()
         self.running_procs.clear()
         log.info("Application stop sequence completed.")
@@ -530,11 +603,9 @@ class ProcessManager:
         shutil.rmtree(temp_update_dir)
         log.warning("All pending updates applied.")
 
-    def supervision_loop(self) -> None:
-        """Main supervisor loop that monitors and restarts critical processes."""
-        # Use setup_logging to ensure the supervisor has its own clean logging
+    def _initialize_supervision(self) -> None:
+        """Initialize logging and state for supervision loop."""
         setup_logging()
-        
         log.info("Supervisor started. Monitoring application processes.")
         self.shutdown_signal_received.clear()
 
@@ -546,44 +617,76 @@ class ProcessManager:
             if psutil.pid_exists(pid)
         }
 
+    def _check_for_shutdown_signal(self) -> bool:
+        """Check if a shutdown signal has been received."""
+        if config.SHUTDOWN_SIGNAL_PATH.exists():
+            log.info("Shutdown signal file detected. Exiting supervisor loop.")
+            return True
+        return False
+    
+    def _check_process_status(self, proc: psutil.Process) -> tuple:
+        """Check if a process is running and in good status."""
+        try:
+            is_running = proc.is_running()
+            status_ok = proc.status() != psutil.STATUS_ZOMBIE
+            return is_running, status_ok
+        except psutil.NoSuchProcess:
+            return False, False
+    
+    def _get_process_status(self, proc: psutil.Process) -> str:
+        """Get a string representation of a process status."""
+        status = "stopped"
+        try:
+            if proc.status() == psutil.STATUS_ZOMBIE:
+                status = "zombie"
+        except psutil.Error:
+            pass
+        return status
+    
+    def _handle_critical_failure(self, name: str) -> bool:
+        """Handle a critical process failure."""
+        if self.restart_failures.get(name, 0) >= MAX_RESTART_ATTEMPTS:
+            log.critical(
+                f"PANIC: Unrecoverable failure for critical process '{name}'. "
+                "Initiating full application shutdown."
+            )
+            self.stop_all()
+            return True
+        return False
+    
+    def _handle_failed_process(self, name: str, proc: psutil.Process) -> bool:
+        """Handle a failed process and attempt restart if critical."""
+        status = self._get_process_status(proc)
+        log.warning(f"Detected {status} process: {name} (PID: {proc.pid})")
+        self.running_procs.pop(name, None)
+
+        if name in CRITICAL_PROCESSES and not self._attempt_restart(name):
+            return self._handle_critical_failure(name)
+        return False
+    
+    def _monitor_processes(self) -> bool:
+        """Monitor all running processes and handle failures."""
+        # Create a copy to allow modification during iteration
+        for name, proc in self.running_procs.items():
+            is_running, status_ok = self._check_process_status(proc)
+            
+            if not (is_running and status_ok):
+                if self._handle_failed_process(name, proc):
+                    return True
+        return False
+
+    def supervision_loop(self) -> None:
+        """Main supervisor loop that monitors and restarts critical processes."""
+        self._initialize_supervision()
+
         while not self.shutdown_signal_received.is_set():
             try:
-                if config.SHUTDOWN_SIGNAL_PATH.exists():
-                    log.info("Shutdown signal file detected. Exiting supervisor loop.")
+                if self._check_for_shutdown_signal():
                     break
 
-                # Create a copy of items to allow modification during iteration
-                for name, proc in list(self.running_procs.items()):
-                    try:
-                        is_running = proc.is_running()
-                        status_ok = proc.status() != psutil.STATUS_ZOMBIE
-                    except psutil.NoSuchProcess:
-                        is_running = False
-                        status_ok = False
-
-                    if not (is_running and status_ok):
-                        status = "stopped"
-                        try:
-                           if proc.status() == psutil.STATUS_ZOMBIE:
-                               status = "zombie"
-                        except psutil.Error:
-                            pass
-                        
-                        log.warning(f"Detected {status} process: {name} (PID: {proc.pid})")
-                        self.running_procs.pop(name, None)
-
-                        if name in CRITICAL_PROCESSES:
-                            if not self._attempt_restart(name):
-                                # If restart fails and we've hit max attempts, panic.
-                                if self.restart_failures.get(name, 0) >= MAX_RESTART_ATTEMPTS:
-                                    log.critical(
-                                        f"PANIC: Unrecoverable failure for critical process '{name}'. "
-                                        "Initiating full application shutdown."
-                                    )
-                                    # Call stop_all directly instead of sys.exit to ensure cleanup
-                                    self.stop_all()
-                                    return
-                                    
+                if self._monitor_processes():
+                    return
+                    
                 time.sleep(SUPERVISOR_SLEEP_INTERVAL)
 
             except KeyboardInterrupt:

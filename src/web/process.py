@@ -207,8 +207,8 @@ def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple
         if template_cfg.get("module") and template_cfg.get("class"):
             try:
                 mod = importlib.import_module(f"src.templates.{template_cfg['module']}")
-                TemplateClass = getattr(mod, template_cfg['class'])
-                template_instance = TemplateClass()
+                template_class = getattr(mod, template_cfg['class'])
+                template_instance = template_class()
             except (ImportError, AttributeError) as e:
                 log.error(f"Failed to load custom template for {path_key}: {e}. Using default.")
 
@@ -320,11 +320,8 @@ class ContentChangeHandler(FileSystemEventHandler):
         if event.is_directory and event.src_path == str(config.ROOT_INDEX_DIR):
             return
 
-        now = time.time()
-        # Debounce to avoid handling rapid-fire save events.
-        if self.debounce_cache.get(event.src_path, 0) > now - self.debounce_interval:
+        if not self._should_process_event(event.src_path):
             return
-        self.debounce_cache[event.src_path] = now
         
         path_to_process, type_id = self._get_relevant_paths(event.src_path)
         if not path_to_process:
@@ -333,24 +330,39 @@ class ContentChangeHandler(FileSystemEventHandler):
         log.debug(f"Watchdog event: {event.event_type} on {event.src_path}")
         
         if type_id == 'asset':
-            if event.event_type in (FileDeletedEvent.event_type, DirDeletedEvent.event_type):
-                 # Handle asset deletion by removing its converted counterpart
-                 media_type = get_media_type(Path(event.src_path))
-                 if media_type:
-                     output_map = {'image': '.avif', 'video': '.webm', 'audio': '.mp3'}
-                     output_filename = Path(event.src_path).stem + output_map[media_type]
-                     output_path = config.ASSETS_OUTPUT_DIR / output_filename
-                     if output_path.exists():
-                         log.info(f"Source asset deleted. Removing converted file: {output_path.name}")
-                         output_path.unlink(missing_ok=True)
-            else: # File created or modified
-                process_asset_file(path_to_process)
-            return
+            self._handle_asset_event(event, path_to_process)
+        else:
+            self._handle_content_event(event, path_to_process, type_id)
+    
+    def _should_process_event(self, path_str: str) -> bool:
+        """Check if the event should be processed or skipped due to debouncing."""
+        now = time.time()
+        if self.debounce_cache.get(path_str, 0) > now - self.debounce_interval:
+            return False
+        self.debounce_cache[path_str] = now
+        return True
         
-        subdomain = type_id
-        content_dir = path_to_process
+    def _handle_asset_event(self, event, path_to_process: Path) -> None:
+        """Handle events for asset files."""
+        is_deletion = event.event_type in (FileDeletedEvent.event_type, DirDeletedEvent.event_type)
         
-        if event.event_type in (FileDeletedEvent.event_type, DirDeletedEvent.event_type):
+        if is_deletion:
+            media_type = get_media_type(Path(event.src_path))
+            if media_type:
+                output_map = {'image': '.avif', 'video': '.webm', 'audio': '.mp3'}
+                output_filename = Path(event.src_path).name + output_map[media_type]
+                output_path = config.ASSETS_OUTPUT_DIR / output_filename
+                if output_path.exists():
+                    log.info(f"Source asset deleted. Removing converted file: {output_path.name}")
+                    output_path.unlink(missing_ok=True)
+        else:
+            process_asset_file(path_to_process)
+            
+    def _handle_content_event(self, event, content_dir: Path, subdomain: str) -> None:
+        """Handle events for content files/directories."""
+        is_deletion = event.event_type in (FileDeletedEvent.event_type, DirDeletedEvent.event_type)
+        
+        if is_deletion:
             if db_manager:
                 path_key_to_delete = db_manager.get_path_key(Path(event.src_path), subdomain)
                 log.info(f"Source deleted. Removing page from DB: {path_key_to_delete}")

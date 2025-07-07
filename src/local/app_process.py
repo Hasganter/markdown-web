@@ -37,6 +37,33 @@ def get_executable_path(base_path: Path) -> Path:
     return base_path.with_suffix(".exe") if sys.platform == "win32" else base_path
 
 
+def _handle_stdout_line(proc_logger, line, line_handler):
+    """Handle a line from stdout using the custom handler."""
+    try:
+        line_handler(line)
+    except Exception as e:
+        proc_logger.error(f"Error in custom line_handler: {e}", exc_info=True)
+
+
+def _read_pipe(pipe, process_name, log_level, is_stdout, line_handler=None):
+    """Read from a pipe and process each line."""
+    proc_logger = logging.getLogger(f"proc.{process_name}")
+    try:
+        for line_bytes in iter(pipe.readline, b""):
+            line = line_bytes.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+                
+            if is_stdout and line_handler:
+                _handle_stdout_line(proc_logger, line, line_handler)
+            else:
+                proc_logger.log(log_level, line)
+    except Exception as e:
+        proc_logger.debug(f"Pipe reader for {process_name} stream exited: {e}")
+    finally:
+        pipe.close()
+
+
 def log_process_output(
     process: subprocess.Popen,
     process_name: str,
@@ -53,38 +80,17 @@ def log_process_output(
     :param process_name: The logical name of the process for logging context.
     :param line_handler: An optional callable to process stdout lines instead of logging them.
     """
-    def reader_thread(pipe: Any, log_level: int, is_stdout: bool) -> None:
-        """Target function for the thread that reads and logs a pipe."""
-        # The logger is created inside the thread to be explicit about its context.
-        proc_logger = logging.getLogger(f"proc.{process_name}")
-        try:
-            for line_bytes in iter(pipe.readline, b""):
-                if not line_bytes:
-                    break
-                line = line_bytes.decode("utf-8", errors="replace").strip()
-                if not line:
-                    continue
-
-                if is_stdout and line_handler:
-                    try:
-                        line_handler(line)
-                    except Exception as e:
-                        proc_logger.error(f"Error in custom line_handler: {e}", exc_info=True)
-                else:
-                    proc_logger.log(log_level, line)
-        except Exception as e:
-            # This can happen if the pipe is closed unexpectedly.
-            proc_logger.debug(f"Pipe reader for {process_name} stream exited: {e}")
-        finally:
-            pipe.close()
-
     if process.stdout:
         threading.Thread(
-            target=reader_thread, args=(process.stdout, logging.INFO, True), daemon=True
+            target=_read_pipe,
+            args=(process.stdout, process_name, logging.INFO, True, line_handler),
+            daemon=True
         ).start()
     if process.stderr:
         threading.Thread(
-            target=reader_thread, args=(process.stderr, logging.ERROR, False), daemon=True
+            target=_read_pipe,
+            args=(process.stderr, process_name, logging.ERROR, False),
+            daemon=True
         ).start()
 
 

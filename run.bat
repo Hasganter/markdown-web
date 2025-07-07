@@ -48,7 +48,7 @@ if /i "%~1"=="fresh" (
     shift /1
 ) else if /i "%~1"=="help" (
     REM Display help message
-    echo Usage: run.bat ^[fresh^|clear^|clog^|cbin^] ^[additional console arguments^]
+    echo Usage: run.bat ^[fresh^|clear^|clog^|...^] ^[additional console arguments^]
     echo.
     echo fresh: Deletes bin and logs directories before running.
     echo flog: Deletes only the logs directory before running.
