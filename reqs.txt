@@ -9,3 +9,7 @@ markdown2
 hypercorn
 starlette[full]
 setproctitle
+pytest
+pytest-asyncio
+pytest-mock
+pytest-xdist

@@ -1,6 +1,7 @@
 # Python
-__pycache__/*
-venv/*
+__pycache__/
+venv/
+.pytest_cache/
 *.py[cod]
 *.pyo
 *.pyd
@@ -9,16 +10,16 @@ venv/*
 _ROOT-INDEX_/
 
 # temp folder
-temp/*
+temp/
 
 # Binary folder
-bin/*
+bin/
 
 # Logs folder
-logs/*
+logs/
 
 # External Binaries
-external/*
+external/
 
 # template folder
 src/templates/*
@@ -27,10 +28,15 @@ src/templates/*
 *.db
 
 # vs Code
-.vscode/*
+.vscode/
 
 # environment variables
 *.env
 
 # exported xlsx
 *.xlsx
+
+#? Temporary ignore
+# Tests - Currently under development
+tests/
+run_tests.py

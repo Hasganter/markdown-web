@@ -2,7 +2,6 @@ import asyncio
 import logging
 import sqlite3
 import time
-import setproctitle
 from collections import deque
 from typing import Any, Deque, Dict, Optional, Tuple
 
@@ -248,6 +247,7 @@ else:
 app = Starlette(debug=False, routes=routes, middleware=middleware)
 
 # Set the process title when the module is loaded by Hypercorn
+import setproctitle
 setproctitle.setproctitle("MDWeb - ASGI Server")
 
 log.info("Starlette ASGI web server worker configured and ready.")

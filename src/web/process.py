@@ -7,7 +7,6 @@ import signal
 import subprocess
 import sys
 import time
-import setproctitle
 from html import escape
 from multiprocessing.synchronize import Event as EventType
 from multiprocessing.synchronize import Lock as LockType
@@ -416,6 +415,7 @@ def content_converter_process_loop(stop_event: EventType, lock: LockType) -> Non
     log.info("Content processor process shut down.")
 
 if __name__ == "__main__":
+    import setproctitle
     setproctitle.setproctitle("MDWeb - ContentConverter")
     db_lock = Lock()
     stop_event = Event()
