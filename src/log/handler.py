@@ -9,6 +9,7 @@ from collections import deque
 from pathlib import Path
 from typing import Deque, List, Dict, Any
 from src.local.config import effective_settings as config
+from src.local.database import LogDBManager
 
 class LokiHandler(logging.Handler):
     """
@@ -164,32 +165,10 @@ class SQLiteHandler(logging.Handler):
         self.db_size_check_interval = config.LOG_DB_SIZE_CHECK_INTERVAL_SECONDS
         self.max_db_size_mb = config.MAX_LOG_DB_SIZE_MB
         self.stop_event = threading.Event()
-        self._ensure_table()
+        self.logDB = LogDBManager(self.db_path)
+        self.logDB.initialize_database()  # Ensure log tables are created
         self._start_flush_thread()
         self._start_db_size_check_thread()
-
-    def _ensure_table(self) -> None:
-        """
-        Ensures that the 'logs' table exists in the database, creating it if necessary.
-        
-        :raises sqlite3.Error: If the table cannot be created or accessed.
-        """
-        try:
-            with sqlite3.connect(self.db_path, timeout=10) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS logs (
-                        timestamp REAL PRIMARY KEY,
-                        level TEXT,
-                        module TEXT,
-                        funcName TEXT,
-                        lineno INTEGER,
-                        message TEXT
-                    )
-                ''')
-                conn.commit()
-        except sqlite3.Error as e:
-            print(f"CRITICAL: Could not create or access log table in {self.db_path}: {e}")
 
     def _start_flush_thread(self) -> None:
         """Starts the background thread that periodically flushes logs to the database."""
@@ -237,7 +216,8 @@ class SQLiteHandler(logging.Handler):
 
     def _flush_locked(self) -> None:
         """
-        Writes the buffered logs to the SQLite database. Assumes the buffer lock is held.
+        Writes the buffered logs to the SQLite database using LogDBManager. 
+        Assumes the buffer lock is held.
         
         :raises sqlite3.Error: If there is an error during the database write operation.
         """
@@ -249,24 +229,15 @@ class SQLiteHandler(logging.Handler):
 
         # Release lock before DB operation
         self.buffer_lock.release()
-        conn = None
         try:
-            conn = sqlite3.connect(self.db_path, timeout=10)
-            cursor = conn.cursor()
-            
-            cursor.executemany('''
-                INSERT OR IGNORE INTO logs (timestamp, level, module, funcName, lineno, message)
-                VALUES (:timestamp, :level, :module, :funcName, :lineno, :message)
-            ''', entries_to_write)
-            conn.commit()
+            # Use LogDBManager's batch insert method for better performance
+            self.logDB.insert_log_batch(entries_to_write)
         except sqlite3.Error as e:
             print(f"Error writing logs to DB: {e}. Log entries: {len(entries_to_write)}")
             # Optional: Add failed logs back to the buffer for retry
             # with self.buffer_lock:
             #     self.log_buffer.extend(entries_to_write)
         finally:
-            if conn:
-                conn.close()
             # Re-acquire lock
             self.buffer_lock.acquire()
 
