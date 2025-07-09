@@ -145,11 +145,29 @@ def process_asset_file(source_path: Path) -> None:
         return
 
     log.info(f"Converting '{source_path.name}' -> '{output_path.name}'...")
-    command_map = {
-        'image': ['-i', str(source_path), '-c:v', 'libaom-av1', '-crf', '30', '-b:v', '0', '-y', str(output_path)],
-        'video': ['-i', str(source_path), '-c:v', 'libvpx-vp9', '-crf', '35', '-b:v', '0', '-c:a', 'libopus', '-b:a', '96k', '-y', str(output_path)],
-        'audio': ['-i', str(source_path), '-codec:a', 'libmp3lame', '-qscale:a', '2', '-y', str(output_path)],
-    }
+    
+    # Check codec availability and provide fallbacks
+    command_map = {}
+    if media_type == 'image':
+        if check_ffmpeg_codec_support('libaom-av1'):
+            command_map['image'] = ['-i', str(source_path), '-c:v', 'libaom-av1', '-crf', '30', '-b:v', '0', '-y', str(output_path)]
+        elif check_ffmpeg_codec_support('libwebp'):
+            # Fallback to WebP
+            output_filename = source_path.name + '.webp'
+            output_path = config.ASSETS_OUTPUT_DIR / output_filename
+            command_map['image'] = ['-i', str(source_path), '-c:v', 'libwebp', '-quality', '80', '-y', str(output_path)]
+            log.warning(f"AV1 encoder not available, falling back to WebP for '{source_path.name}'")
+        else:
+            # Last resort: just copy the file
+            shutil.copy2(source_path, config.ASSETS_OUTPUT_DIR / source_path.name)
+            log.warning(f"No suitable encoder found, copying '{source_path.name}' as-is")
+            return
+    else:
+        command_map = {
+            'video': ['-i', str(source_path), '-c:v', 'libvpx-vp9', '-crf', '35', '-b:v', '0', '-c:a', 'libopus', '-b:a', '96k', '-y', str(output_path)],
+            'audio': ['-i', str(source_path), '-codec:a', 'libmp3lame', '-qscale:a', '2', '-y', str(output_path)],
+        }
+    
     command = [str(ffmpeg_exe)] + command_map[media_type]
 
     try:
@@ -163,6 +181,7 @@ def process_asset_file(source_path: Path) -> None:
         log.error(f"Failed to convert '{source_path.name}'. FFmpeg error:\n{e.stderr}")
     except FileNotFoundError:
         log.critical(f"FFmpeg executable not found at '{ffmpeg_exe}'. Cannot convert assets.")
+
 
 
 def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple[str, bool]:
@@ -277,6 +296,29 @@ def scan_and_process_all_assets() -> None:
     log.info("Full asset scan complete.")
 
 
+def check_ffmpeg_codec_support(codec_name: str) -> bool:
+    """
+    Check if FFmpeg supports a specific codec.
+    
+    :param codec_name: The codec name to check (e.g., 'libaom-av1')
+    :return bool: True if codec is available, False otherwise
+    """
+    ffmpeg_exe = get_executable_path(config.FFMPEG_PATH)
+    if not ffmpeg_exe.exists():
+        return False
+    
+    try:
+        result = subprocess.run(
+            [str(ffmpeg_exe), '-encoders'], 
+            capture_output=True, 
+            text=True, 
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        )
+        return codec_name in result.stdout
+    except subprocess.CalledProcessError:
+        return False
+
+
 class ContentChangeHandler(FileSystemEventHandler):
     """A watchdog event handler that responds to changes in content source files."""
 
@@ -386,45 +428,43 @@ def content_converter_process_loop(stop_event: EventType, lock: LockType) -> Non
     db_manager.initialize_database()
 
     log.info("Content processor process started.")
-
-    # Perform initial full scan on startup
-    scan_and_process_all_content()
-    scan_and_process_all_assets()
     
     # Setup watchdog observer
     observer = Observer()
-    with Pool(processes=min(cpu_count(), 4), initializer=init_worker, initargs=(lock,)) as pool:
+    # Determine optimal pool size based on content directories or config
+    content_dirs = db_manager.discover_content_directories() if db_manager else []
+    num_processes = min(cpu_count(), len(content_dirs)) if content_dirs else 1
+    with Pool(processes=num_processes, initializer=init_worker, initargs=(lock,)) as pool:
+        log.info(f"Starting content processor observer with {num_processes} worker processes.")
         event_handler = ContentChangeHandler(pool)
         observer.schedule(event_handler, str(config.ROOT_INDEX_DIR), recursive=True)
         observer.start()
-        log.info(f"Watching '{config.ROOT_INDEX_DIR}' for changes...")
-        
         try:
             # Main loop: wait for stop event or periodic rescan interval
-            while not stop_event.wait(timeout=config.MARKDOWN_SCAN_INTERVAL_SECONDS):
+            while not stop_event.is_set():
+                # Wait for the scan interval or until stop_event is set
+                stop_event.wait(timeout=config.MARKDOWN_SCAN_INTERVAL_SECONDS)
                 log.debug("Periodic rescan initiated by timer...")
                 scan_and_process_all_content()
                 scan_and_process_all_assets()
+                # Check observer health
+                if not observer.is_alive():
+                    log.error("Watchdog observer thread has stopped unexpectedly. Restarting observer.")
+                    observer.stop()
+                    observer.join(timeout=5)
+                    observer = Observer()
+                    event_handler = ContentChangeHandler(pool)
+                    observer.schedule(event_handler, str(config.ROOT_INDEX_DIR), recursive=True)
+                    observer.start()
+                    log.info("Observer restarted.")
         except Exception as e:
             log.error(f"Unhandled exception in content processor loop: {e}", exc_info=True)
+            shutdown_reason = f"due to exception: {e}"
+        else:
+            shutdown_reason = "because stop event was received"
         finally:
             observer.stop()
             observer.join()
             log.info("Content processor observer stopped.")
 
-    log.info("Content processor process shut down.")
-
-if __name__ == "__main__":
-    import setproctitle
-    setproctitle.setproctitle("MDWeb - ContentConverter")
-    db_lock = Lock()
-    stop_event = Event()
-
-    def handle_shutdown_signal(signum, frame):
-        log.info(f"Signal {signum} received, shutting down content processor.")
-        stop_event.set()
-
-    signal.signal(signal.SIGTERM, handle_shutdown_signal)
-    signal.signal(signal.SIGINT, handle_shutdown_signal)
-
-    content_converter_process_loop(stop_event, db_lock)
+    log.info(f"Content processor process shut down ({shutdown_reason}).")
