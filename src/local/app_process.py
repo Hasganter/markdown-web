@@ -131,6 +131,7 @@ def get_process_args(process_name: str) -> Tuple[List[str], Path]:
         ),
         "asgi_server": (
             [
+                config.PYTHON_EXECUTABLE, "-m",
                 "hypercorn",
                 "-c", str(config.HYPERCORN_CONFIG_PATH.resolve()),
                 "src.web.server:app"
