@@ -1,61 +1,86 @@
 @echo off
 setlocal
 
-REM Project root directory (where this script is)
+:: Project root directory (where this script is)
 set PROJECT_DIR=%~dp0
-REM Python virtual environment directory name
+:: Python virtual environment directory name
 set VENV_DIR=venv
 
-REM --- Argument Parsing ---
+:: Create necessary directories if they don't exist
+if not exist "%PROJECT_DIR%bin" mkdir "%PROJECT_DIR%bin"
+if not exist "%PROJECT_DIR%logs" mkdir "%PROJECT_DIR%logs"
+if not exist "%PROJECT_DIR%_ROOT-INDEX_" mkdir "%PROJECT_DIR%_ROOT-INDEX_"
+if not exist "%PROJECT_DIR%_ROOT-INDEX_\.assets" mkdir "%PROJECT_DIR%_ROOT-INDEX_\.assets"
+if not exist "%PROJECT_DIR%bin\assets" mkdir "%ASSETS_OUTPUT_DIR%bin\assets"
+if not exist "%PROJECT_DIR%src\templates" mkdir "%PROJECT_DIR%src\templates"
+if not exist "%PROJECT_DIR%external" mkdir "%PROJECT_DIR%external"
+
+:: --- Argument Parsing ---
 set "CMD_ARGS="
 set "CLEAR_LOG=0"
 set "CLEAR_BIN=0"
+set "CLEAN_SRC=0"
 set "END_EARLY=0"
 
-REM Check the first argument
+:: Check the first argument
 if /i "%~1"=="fresh" (
-    REM Fresh start: delete bin and logs directories
+    :: Fresh start: delete bin and logs directories
     echo Fresh start requested. Deleting bin and logs directories...
     set "CLEAR_LOG=1"
     set "CLEAR_BIN=1"
+    set "CLEAN_SRC=1"
     shift /1
 ) else if /i "%~1"=="clear" (
-    REM Clear files: delete bin and logs directories, then exit
+    :: Clear files: delete bin and logs directories, then exit
     echo Clear files requested. Deleting bin and logs directories...
     set "CLEAR_LOG=1"
     set "CLEAR_BIN=1"
+    set "CLEAN_SRC=1"
     set "END_EARLY=1"
     shift /1
 ) else if /i "%~1"=="clog" (
-    REM Clear logs: delete only logs directory
+    :: Clear logs: delete only logs directory
     echo Clear logs requested. Deleting logs directory...
     set "CLEAR_LOG=1"
     set "END_EARLY=1"
     shift /1
 ) else if /i "%~1"=="cbin" (
-    REM Clear bin: delete only bin directory
+    :: Clear bin: delete only bin directory
     set "CLEAR_BIN=1"
     set "END_EARLY=1"
     shift /1
+) else if /i "%~1"=="csrc" (
+    :: Clean src: delete Python cache files in src directory
+    echo Clean src requested. Deleting Python cache files in src directory...
+    set "CLEAN_SRC=1"
+    set "END_EARLY=1"
+    shift /1
 ) else if /i "%~1"=="flog" (
-    REM Clear logs: delete only logs directory
+    :: Clear logs: delete only logs directory
     echo Clear logs requested. Deleting logs directory...
     set "CLEAR_LOG=1"
     shift /1
 ) else if /i "%~1"=="fbin" (
-    REM Clear bin: delete only bin directory
+    :: Clear bin: delete only bin directory
     set "CLEAR_BIN=1"
     shift /1
+) else if /i "%~1"=="fsrc" (
+    :: Clean src: delete Python cache files in src directory
+    echo Clean src requested. Deleting Python cache files in src directory...
+    set "CLEAN_SRC=1"
+    shift /1
 ) else if /i "%~1"=="help" (
-    REM Display help message
+    :: Display help message
     echo Usage: run.bat ^[fresh^|clear^|clog^|...^] ^[additional console arguments^]
     echo.
-    echo fresh: Deletes bin and logs directories before running.
+    echo fresh: Deletes bin and logs directories and cleans src folder from caches before running.
     echo flog: Deletes only the logs directory before running.
     echo fbin: Deletes only the bin directory before running.
-    echo clear: Deletes bin and logs directories before exitting.
+    echo fsrc: Cleans Python cache files in src directory before running.
+    echo clear: Deletes bin and logs directories and cleans src folder from caches before exitting.
     echo clog: Deletes only the logs directory before exitting.
     echo cbin: Deletes only the bin directory before exitting.
+    echo csrc: Cleans Python cache files in src directory before exitting.
     echo help: Displays this help message before exitting.
     echo.
     echo Additional arguments will be passed to the management console.
@@ -63,7 +88,7 @@ if /i "%~1"=="fresh" (
     exit /b 0
 )
 
-REM Collect all remaining arguments for CMD_ARGS
+:: Collect all remaining arguments for CMD_ARGS
 :arg_loop_collect
 if "%~1"=="" goto :arg_loop_collect_end
 set "CMD_ARGS=%CMD_ARGS% %~1"
@@ -87,12 +112,18 @@ if %CLEAR_BIN%==1 (
     )
 )
 
+if %CLEAN_SRC%==1 (
+    echo Cleaning Python cache files in src directory...
+    for /r "%PROJECT_DIR%src" %%f in (*.pyc) do del /q "%%f" 2>nul
+    for /d /r "%PROJECT_DIR%src" %%d in (__pycache__) do rd /s /q "%%d" 2>nul
+)
+
 if %END_EARLY%==1 (
     echo File deletion complete, ending script.
     endlocal
     exit /b 0
 )
-REM --- End Argument Parsing ---
+:: --- End Argument Parsing ---
 
 echo Checking for Python...
 python --version >nul 2>&1
@@ -112,7 +143,7 @@ if %errorlevel% neq 0 (
     set PYTHON_EXEC=python
 )
 
-REM Create a default .env file if it doesn't exist
+:: Create a default .env file if it doesn't exist
 if not exist "%PROJECT_DIR%.env" (
     echo.
     echo .env file not found. Creating a default one...
@@ -146,7 +177,7 @@ if not exist "%PROJECT_DIR%.env" (
     echo.
 )
 
-REM Check if venv exists, create if not
+:: Check if venv exists, create if not
 if not exist "%PROJECT_DIR%%VENV_DIR%" (
     echo Creating virtual environment in "%PROJECT_DIR%%VENV_DIR%"...
     %PYTHON_EXEC% -m venv "%PROJECT_DIR%%VENV_DIR%"
@@ -170,16 +201,6 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-
-REM Create necessary directories if they don't exist
-if not exist "%PROJECT_DIR%bin" mkdir "%PROJECT_DIR%bin"
-if not exist "%PROJECT_DIR%logs" mkdir "%PROJECT_DIR%logs"
-if not exist "%PROJECT_DIR%_ROOT-INDEX_" mkdir "%PROJECT_DIR%_ROOT-INDEX_"
-if not exist "%PROJECT_DIR%_ROOT-INDEX_\.assets" mkdir "%PROJECT_DIR%_ROOT-INDEX_\.assets"
-if not exist "%PROJECT_DIR%bin\assets" mkdir "%ASSETS_OUTPUT_DIR%bin\assets"
-if not exist "%PROJECT_DIR%src\templates" mkdir "%PROJECT_DIR%src\templates"
-if not exist "%PROJECT_DIR%external" mkdir "%PROJECT_DIR%external"
-
 
 set PYTHONPYCACHEPREFIX=%PROJECT_DIR%bin\__pycache__
 if not exist "%PYTHONPYCACHEPREFIX%" mkdir "%PYTHONPYCACHEPREFIX%"
