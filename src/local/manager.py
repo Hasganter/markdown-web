@@ -469,9 +469,12 @@ class ProcessManager:
         for proc in processes:
             try:
                 if 'nginx' not in proc.name().lower():
-                    log.debug(f"Sending SIGTERM to {proc.name()} (PID {proc.pid})")
+                    process_name = proc.name()
+                    process_pid = proc.pid
+                    log.debug(f"Sending SIGTERM to {process_name} (PID {process_pid})")
                     proc.terminate()
             except psutil.NoSuchProcess:
+                log.warning(f"Process {process_name} (PID {process_pid}) no longer exists.")
                 continue
     
     def _forceful_kill(self, processes: list) -> None:
@@ -523,7 +526,9 @@ class ProcessManager:
                 log.debug(f"Process {proc.name()} (PID {proc.pid}) terminated gracefully.")
         except psutil.TimeoutExpired:
             alive = procs_list
-        
+        except psutil.NoSuchProcess:
+            pass  # Some processes may have already exited
+
         # Forceful shutdown if needed
         self._forceful_kill(alive)
         
