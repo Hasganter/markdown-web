@@ -34,6 +34,20 @@ NGINX_EXECUTABLE_PATH = EXTERNAL_DIR / "nginx" / "nginx"
 LOKI_PATH = EXTERNAL_DIR / "grafana" / "loki-windows-amd64"
 ALLOY_PATH = EXTERNAL_DIR / "grafana" / "alloy-windows-amd64"
 
+# --- Python Executable Configuration ---
+# Configurable Python executable for subprocess management
+# Default to 'python.exe', can be overridden to 'pythonw.exe' or full path
+import sys
+DEFAULT_PYTHON_EXE = "python.exe"
+PYTHON_EXECUTABLE = os.getenv("PYTHON_EXECUTABLE", DEFAULT_PYTHON_EXE)
+# If the configured executable is just a name (not a full path), use sys.executable as fallback
+if not os.path.isabs(PYTHON_EXECUTABLE) and PYTHON_EXECUTABLE in (DEFAULT_PYTHON_EXE, "pythonw.exe"):
+    # For relative names, use the directory of sys.executable
+    PYTHON_EXECUTABLE = str(pathlib.Path(sys.executable).parent / PYTHON_EXECUTABLE)
+elif PYTHON_EXECUTABLE == DEFAULT_PYTHON_EXE:
+    # Default fallback to sys.executable
+    PYTHON_EXECUTABLE = sys.executable
+
 # --- Manager/Supervisor Settings ---
 SUPERVISOR_SLEEP_INTERVAL = 2
 MAX_RESTART_ATTEMPTS = 3
@@ -56,8 +70,8 @@ NGINX_HOST = os.getenv("NGINX_HOST", "0.0.0.0")
 NGINX_PORT = int(os.getenv("NGINX_PORT", "8080"))
 NGINX_SOURCE_PATH = EXTERNAL_DIR / "nginx"
 NGINX_RATELIMIT_ZONE_SIZE = "10m" # Shared memory zone size for rate limiting
-NGINX_RATELIMIT_RATE = "5r/s"    # Rate limit (e.g., 5 requests per second)
-NGINX_RATELIMIT_BURST = "20"     # How many requests to allow in a burst
+NGINX_RATELIMIT_RATE = "5r/s"     # Rate limit (e.g., 5 requests per second)
+NGINX_RATELIMIT_BURST = "20"      # How many requests to allow in a burst
 
 # --- Optional Services ---
 # Ngrok (for development)

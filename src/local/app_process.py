@@ -126,7 +126,7 @@ def get_process_args(process_name: str) -> Tuple[List[str], Path]:
             bin_dir
         ),
         "content_converter": (
-            [sys.executable, "-m", "src.web.process"],
+            [config.PYTHON_EXECUTABLE, "-m", "src.local.entry.content_converter"],
             base_dir
         ),
         "asgi_server": (
@@ -145,12 +145,12 @@ def get_process_args(process_name: str) -> Tuple[List[str], Path]:
             bin_dir
         ),
         "supervisor": (
-            [sys.executable, "-m", "src.local.supervisor_entry"],
+            [config.PYTHON_EXECUTABLE, "-m", "src.local.entry.supervisor"],
             base_dir
         ),
         "ngrok": (
             [
-                sys.executable, "-m", "ngrok",
+                config.PYTHON_EXECUTABLE, "-m", "ngrok",
                 "http", str(config.NGINX_PORT),
                 "--log", "stdout",
                 "--authtoken", config.NGROK_AUTHTOKEN
