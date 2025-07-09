@@ -321,17 +321,7 @@ class ContentDBManager(BaseDBManager):
         """
         super().__init__(db_path, lock=lock, enable_wal=True)
 
-    def initialize_database(self) -> None:
-        """
-        Initializes the content DB by creating the 'pages' table if needed.
-        """
-        if self.lock:
-            with self.lock:
-                self._create_pages_table()
-        else:
-            self._create_pages_table()
-
-    def _create_pages_table(self):
+    def initialize_database(self):
         try:
             self.execute("""
                 CREATE TABLE IF NOT EXISTS pages (
