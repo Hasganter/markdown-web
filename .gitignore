@@ -18,11 +18,12 @@ bin/
 # Logs folder
 logs/
 
-# External Binaries
+# External Binaries, except the ones in the bin folder
 external/
+!src/local/external/
 
 # template folder
-src/templates/*
+templates/*
 
 # database
 *.db
