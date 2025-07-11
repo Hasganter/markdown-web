@@ -1,94 +1,99 @@
 @echo off
 setlocal
 
-:: Project root directory (where this script is)
-set PROJECT_DIR=%~dp0
-:: Python virtual environment directory name
-set VENV_DIR=venv
+:: ============================================================================
+:: Project and Environment Variables
+:: ============================================================================
+set "PROJECT_DIR=%~dp0"
+set "VENV_DIR=venv"
+set "PID_FILE_PATH=%PROJECT_DIR%bin\app.pid"
+set "PYTHON_EXEC=python"
 
-:: Create necessary directories if they don't exist
+
+:: ============================================================================
+:: Initial Directory Creation
+:: ============================================================================
+:: Ensure all necessary base directories exist before any other operations.
 if not exist "%PROJECT_DIR%bin" mkdir "%PROJECT_DIR%bin"
 if not exist "%PROJECT_DIR%logs" mkdir "%PROJECT_DIR%logs"
+if not exist "%PROJECT_DIR%templates" mkdir "%PROJECT_DIR%templates"
+if not exist "%PROJECT_DIR%external" mkdir "%PROJECT_DIR%external"
 if not exist "%PROJECT_DIR%_ROOT-INDEX_" mkdir "%PROJECT_DIR%_ROOT-INDEX_"
 if not exist "%PROJECT_DIR%_ROOT-INDEX_\.assets" mkdir "%PROJECT_DIR%_ROOT-INDEX_\.assets"
-if not exist "%PROJECT_DIR%bin\assets" mkdir "%ASSETS_OUTPUT_DIR%bin\assets"
-if not exist "%PROJECT_DIR%src\templates" mkdir "%PROJECT_DIR%src\templates"
-if not exist "%PROJECT_DIR%external" mkdir "%PROJECT_DIR%external"
 
-:: --- Argument Parsing ---
+
+
+:: ============================================================================
+:: Argument Parsing and Cleanup
+:: ============================================================================
 set "CMD_ARGS="
 set "CLEAR_LOG=0"
 set "CLEAR_BIN=0"
 set "CLEAN_SRC=0"
 set "END_EARLY=0"
 
-:: Check the first argument
 if /i "%~1"=="fresh" (
-    :: Fresh start: delete bin and logs directories
-    echo Fresh start requested. Deleting bin and logs directories...
+    echo Fresh start requested.
     set "CLEAR_LOG=1"
     set "CLEAR_BIN=1"
     set "CLEAN_SRC=1"
     shift /1
 ) else if /i "%~1"=="clear" (
-    :: Clear files: delete bin and logs directories, then exit
-    echo Clear files requested. Deleting bin and logs directories...
+    echo Clear files requested. This will exit after cleaning.
     set "CLEAR_LOG=1"
     set "CLEAR_BIN=1"
     set "CLEAN_SRC=1"
     set "END_EARLY=1"
     shift /1
 ) else if /i "%~1"=="clog" (
-    :: Clear logs: delete only logs directory
-    echo Clear logs requested. Deleting logs directory...
+    echo Clear logs requested. This will exit after cleaning.
     set "CLEAR_LOG=1"
     set "END_EARLY=1"
     shift /1
 ) else if /i "%~1"=="cbin" (
-    :: Clear bin: delete only bin directory
+    echo Clear bin requested. This will exit after cleaning.
     set "CLEAR_BIN=1"
     set "END_EARLY=1"
     shift /1
 ) else if /i "%~1"=="csrc" (
-    :: Clean src: delete Python cache files in src directory
-    echo Clean src requested. Deleting Python cache files in src directory...
+    echo Clean src requested. This will exit after cleaning.
     set "CLEAN_SRC=1"
     set "END_EARLY=1"
     shift /1
 ) else if /i "%~1"=="flog" (
-    :: Clear logs: delete only logs directory
-    echo Clear logs requested. Deleting logs directory...
+    echo Deleting logs directory before running...
     set "CLEAR_LOG=1"
     shift /1
 ) else if /i "%~1"=="fbin" (
-    :: Clear bin: delete only bin directory
+    echo Deleting bin directory before running...
     set "CLEAR_BIN=1"
     shift /1
 ) else if /i "%~1"=="fsrc" (
-    :: Clean src: delete Python cache files in src directory
-    echo Clean src requested. Deleting Python cache files in src directory...
+    echo Cleaning src cache before running...
     set "CLEAN_SRC=1"
     shift /1
 ) else if /i "%~1"=="help" (
-    :: Display help message
-    echo Usage: run.bat ^[fresh^|clear^|clog^|...^] ^[additional console arguments^]
+    echo Usage: run.bat ^[fresh^|clear^|clog^|...^] ^[console_command^] ^[console_args^]
     echo.
-    echo fresh: Deletes bin and logs directories and cleans src folder from caches before running.
-    echo flog: Deletes only the logs directory before running.
-    echo fbin: Deletes only the bin directory before running.
-    echo fsrc: Cleans Python cache files in src directory before running.
-    echo clear: Deletes bin and logs directories and cleans src folder from caches before exitting.
-    echo clog: Deletes only the logs directory before exitting.
-    echo cbin: Deletes only the bin directory before exitting.
-    echo csrc: Cleans Python cache files in src directory before exitting.
-    echo help: Displays this help message before exitting.
+    echo  Startup Modifiers ^(run before application starts^)^:
+    echo    fresh        - Deletes 'bin', 'logs', and cleans src cache.
+    echo    flog         - Deletes 'logs' only.
+    echo    fbin         - Deletes 'bin' only.
+    echo    fsrc         - Cleans src cache only.
     echo.
-    echo Additional arguments will be passed to the management console.
+    echo  Standalone Cleanup Commands ^(exit after running^)^:
+    echo    clear        - Same as 'fresh' but exits immediately.
+    echo    clog, cbin, csrc - Same as 'f...' commands but exit immediately.
+    echo.
+    echo  Other:
+    echo    help         - Displays this help message.
+    echo.
+    echo Any other arguments are passed directly to the management console.
     endlocal
     exit /b 0
 )
 
-:: Collect all remaining arguments for CMD_ARGS
+:: Collect all remaining arguments to pass to the Python script
 :arg_loop_collect
 if "%~1"=="" goto :arg_loop_collect_end
 set "CMD_ARGS=%CMD_ARGS% %~1"
@@ -99,16 +104,16 @@ goto :arg_loop_collect
 if %CLEAR_LOG%==1 (
     if exist "%PROJECT_DIR%logs" (
         echo Deleting files in logs...
-        del /q "%PROJECT_DIR%logs\*"
-        for /d %%i in ("%PROJECT_DIR%logs\*") do rd /s /q "%%i"
+        rd /s /q "%PROJECT_DIR%logs"
+        mkdir "%PROJECT_DIR%logs"
     )
 )
 
 if %CLEAR_BIN%==1 (
     if exist "%PROJECT_DIR%bin" (
         echo Deleting files in bin...
-        del /q "%PROJECT_DIR%bin\*"
-        for /d %%i in ("%PROJECT_DIR%bin\*") do rd /s /q "%%i"
+        rd /s /q "%PROJECT_DIR%bin"
+        mkdir "%PROJECT_DIR%bin"
     )
 )
 
@@ -119,11 +124,38 @@ if %CLEAN_SRC%==1 (
 )
 
 if %END_EARLY%==1 (
-    echo File deletion complete, ending script.
+    echo Cleanup complete. Exiting.
     endlocal
     exit /b 0
 )
-:: --- End Argument Parsing ---
+
+
+:: ============================================================================
+:: Setup Check
+:: ============================================================================
+:: If the PID file exists, we assume the environment is set up and skip the
+:: lengthy checks, jumping directly to activating the venv and running the app.
+:: The 'cbin' or 'fresh' commands above will have already deleted this file,
+:: which correctly forces a full setup on the next run.
+
+if not exist "%PROJECT_DIR%bin\assets" mkdir "%PROJECT_DIR%bin\assets"
+
+if exist "%PID_FILE_PATH%" (
+    echo.
+    echo PID file found. Assuming environment is ready and skipping full setup.
+    goto :run_application
+)
+
+echo.
+echo PID file not found. Performing full one-time environment setup...
+echo This may take a moment. Subsequent runs will be faster.
+echo.
+
+
+:: ============================================================================
+:: Full Setup
+:: ============================================================================
+:: This section only runs if the PID file was not found.
 
 echo Checking for Python...
 python --version >nul 2>&1
@@ -140,7 +172,6 @@ if %errorlevel% neq 0 (
     )
 ) else (
     echo Python found in PATH.
-    set PYTHON_EXEC=python
 )
 
 :: Create a default .env file if it doesn't exist
@@ -172,12 +203,15 @@ if not exist "%PROJECT_DIR%.env" (
         echo.
         echo #  DDoS Protection ^(Handled by Nginx^)
         echo DDOS_PROTECTION_ENABLED="False"
+        echo .
+        echo #  Python Executable
+        echo # Options: "python.exe", "pythonw.exe", or full path to specific Python executable
+        echo PYTHON_EXECUTABLE="pythonw.exe"
+        echo.
     ) > "%PROJECT_DIR%.env"
     echo Default .env file created. Please review it before running in production.
-    echo.
 )
 
-:: Check if venv exists, create if not
 if not exist "%PROJECT_DIR%%VENV_DIR%" (
     echo Creating virtual environment in "%PROJECT_DIR%%VENV_DIR%"...
     %PYTHON_EXEC% -m venv "%PROJECT_DIR%%VENV_DIR%"
@@ -188,35 +222,44 @@ if not exist "%PROJECT_DIR%%VENV_DIR%" (
     )
 )
 
-echo Activating virtual environment...
+echo Activating virtual environment for setup...
 call "%PROJECT_DIR%%VENV_DIR%\Scripts\activate.bat"
 
-echo Checking if pip is up to date...
-%PYTHON_EXEC% -m pip install --upgrade pip >nul 2>&1
+echo Ensuring pip is up to date...
+%PYTHON_EXEC% -m pip install --upgrade pip >nul
 
-echo Installing requirements from reqs.txt...
-%PYTHON_EXEC% -m pip install -r "%PROJECT_DIR%reqs.txt" >nul
+echo Installing/verifying requirements from reqs.txt...
+%PYTHON_EXEC% -m pip install -r "%PROJECT_DIR%reqs.txt"
 if %errorlevel% neq 0 (
     echo Failed to install requirements from reqs.txt.
     pause
     exit /b 1
 )
+echo.
 
-set PYTHONPYCACHEPREFIX=%PROJECT_DIR%bin\__pycache__
+:: ============================================================================
+:: Application Execution
+:: ============================================================================
+:run_application
+
+:: This part runs every time, ensuring the venv is active for the current session.
+echo Activating virtual environment...
+call "%PROJECT_DIR%%VENV_DIR%\Scripts\activate.bat"
+
+:: Set up Python cache directory
+set "PYTHONPYCACHEPREFIX=%PROJECT_DIR%bin\__pycache__"
 if not exist "%PYTHONPYCACHEPREFIX%" mkdir "%PYTHONPYCACHEPREFIX%"
 
 echo.
 if not "%CMD_ARGS%"=="" (
-  echo Executing command: %CMD_ARGS%
+  echo Executing command:%CMD_ARGS%
 ) else (
   echo Setup complete. Starting the management console...
 )
 echo.
 
-if defined CMD_ARGS (
-    %PYTHON_EXEC% -m src.main %CMD_ARGS%
-) else (
-    %PYTHON_EXEC% -m src.main
-)
+:: Run the management console with any collected arguments
+%PYTHON_EXEC% -m src.main %CMD_ARGS%
 
 endlocal
+exit /b 0

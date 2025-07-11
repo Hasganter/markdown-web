@@ -1,15 +1,14 @@
-import json
-import logging
 import re
-import shutil
 import sys
 import time
+import json
+import shutil
 import zipfile
+import logging
+import requests
 from pathlib import Path
 from typing import Dict, Any
-import requests
-
-from src.local.config import effective_settings as config
+from src.local import app_globals
 
 log = logging.getLogger(__name__)
 
@@ -18,8 +17,8 @@ class DependencyManager:
     """Manages downloading, updating, and recovering external dependencies."""
 
     def __init__(self):
-        self.dependencies: Dict[str, Dict[str, Any]] = config.EXTERNAL_DEPENDENCIES
-        self.external_dir = config.EXTERNAL_DIR
+        self.dependencies: Dict[str, Dict[str, Any]] = app_globals.EXTERNAL_DEPENDENCIES
+        self.external_dir = app_globals.EXTERNAL_DIR
         self.old_dir = self.external_dir / ".old"
         # Consolidated temporary directory for all downloads
         self.temp_dir = self.external_dir / ".temp"

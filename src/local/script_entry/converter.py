@@ -6,20 +6,22 @@ proper signal handling and multiprocessing setup. This clean separation
 avoids circular dependencies and ensures the content converter process
 has a simple, dedicated startup routine.
 """
-import setproctitle
 import signal
+import setproctitle
 from multiprocessing import Lock, Event
-from src.web.process import content_converter_process_loop
 from src.log.setup import setup_logging
+from src.converter import content_converter_process_loop
 
 # Global reference for signal handler
 stop_event = None
+
 
 def handle_shutdown_signal(signum, frame):
     """Handle shutdown signals gracefully."""
     import logging
     log = logging.getLogger(__name__)
-    log.info(f"Signal {signum} received, shutting down content converter.")
+    setup_logging()
+    log.debug(f"Signal {signum} received, shutting down content converter.")
     if stop_event:
         stop_event.set()
 

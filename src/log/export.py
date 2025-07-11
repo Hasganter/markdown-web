@@ -1,10 +1,12 @@
 import sqlite3
+import logging
 import pandas as pd
+from typing import Any
 from pathlib import Path
 from openpyxl.styles import PatternFill, Font
 from openpyxl.styles.numbers import BUILTIN_FORMATS
-from openpyxl.utils.dataframe import dataframe_to_rows
-from typing import Any
+
+log = logging.getLogger(__name__)
 
 # Define styles as constants for reuse
 HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -13,6 +15,7 @@ YELLOW_FILL = PatternFill(start_color="FFFFA0", end_color="FFFFA0", fill_type="s
 RED_FILL = PatternFill(start_color="FF9696", end_color="FF9696", fill_type="solid")
 BLUE_FILL = PatternFill(start_color="E6E6FF", end_color="E6E6FF", fill_type="solid")
 TEXT_FORMAT = BUILTIN_FORMATS[49]  # '@' (Text format)
+
 
 def escape_formula(value: Any) -> Any:
     """
@@ -33,7 +36,7 @@ def get_logs_from_database(db_path: Path) -> pd.DataFrame:
     :param db_path: The file path to the SQLite database.
     :return: DataFrame with log entries or None if an error occurred.
     """
-    print(f"Connecting to database: {db_path}")
+    log.debug(f"Connecting to database: {db_path}")
     try:
         with sqlite3.connect(db_path) as con:
             query = """
@@ -47,10 +50,10 @@ def get_logs_from_database(db_path: Path) -> pd.DataFrame:
             ORDER BY timestamp ASC;
             """
             df = pd.read_sql_query(query, con)
-            print(f"Read {len(df)} log entries from the database.")
+            log.info(f"Read {len(df)} log entries from the database.")
             return df
     except (sqlite3.Error, pd.errors.DatabaseError) as e:
-        print(f"An error occurred while reading the database: {e}")
+        log.error(f"An error occurred while reading the database: {e}")
         return None
 
 def sanitize_log_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -60,7 +63,7 @@ def sanitize_log_data(df: pd.DataFrame) -> pd.DataFrame:
     :param df: DataFrame with log entries.
     :return: Sanitized DataFrame.
     """
-    print("Sanitizing data to prevent Excel formula errors...")
+    log.debug("Sanitizing data to prevent Excel formula errors...")
     for col in ['Module', 'Func Source', 'Message']:
         df[col] = df[col].apply(escape_formula)
     return df
@@ -124,7 +127,7 @@ def write_to_excel(df: pd.DataFrame, output_path: Path) -> bool:
     :param output_path: Path where Excel file will be saved.
     :return: True if successful, False otherwise.
     """
-    print(f"Writing data to Excel file: {output_path}")
+    log.info(f"Writing data to Excel file: {output_path}")
     try:
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Logs')
@@ -136,11 +139,11 @@ def write_to_excel(df: pd.DataFrame, output_path: Path) -> bool:
             apply_row_styling(ws, level_col_idx)
             adjust_column_widths(ws)
 
-        print("\nExport successful!")
-        print(f"File saved to: {output_path.resolve()}")
+        log.info("\nExport successful!")
+        log.info(f"File saved to: {output_path.resolve()}")
         return True
     except Exception as e:
-        print(f"An error occurred while writing or styling the Excel file: {e}")
+        log.error(f"An error occurred while writing or styling the Excel file: {e}")
         return False
 
 def export_logs_to_excel(db_path: Path, output_path: Path) -> None:
@@ -154,7 +157,7 @@ def export_logs_to_excel(db_path: Path, output_path: Path) -> None:
     :param output_path: The file path where the Excel file will be saved.
     """
     if not db_path.exists():
-        print(f"Error: Database file not found at '{db_path}'")
+        log.error(f"Error: Database file not found at '{db_path}'")
         return
 
     # Get data from database
@@ -163,7 +166,7 @@ def export_logs_to_excel(db_path: Path, output_path: Path) -> None:
         return
         
     if df.empty:
-        print("No log entries to export.")
+        log.warning("No log entries to export.")
         return
 
     # Sanitize data

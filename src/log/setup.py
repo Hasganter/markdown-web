@@ -1,8 +1,8 @@
-import logging
 import sys
-
-from src.local.config import effective_settings as config
+import logging
+from src.local import app_globals
 from src.log.handler import SQLiteHandler, LokiHandler
+
 
 class SubprocessLogFilter(logging.Filter):
     """
@@ -37,7 +37,7 @@ def setup_logging(console_level: int = logging.INFO) -> None:
 
     :param console_level: The logging level for the console output (e.g., logging.INFO).
     """
-    config.LOG_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    app_globals.LOG_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     root_logger = logging.getLogger()
     # Set root level to lowest to capture all messages for handler filtering
@@ -55,7 +55,7 @@ def setup_logging(console_level: int = logging.INFO) -> None:
     
     # --- SQLite Handler (always enabled for all levels) ---
     try:
-        sqlite_handler = SQLiteHandler(db_path=config.LOG_DB_PATH)
+        sqlite_handler = SQLiteHandler(db_path=app_globals.LOG_DB_PATH)
         sqlite_handler.setLevel(logging.DEBUG)
         # Subprocess logs need to be stored, so we don't filter them here.
         root_logger.addHandler(sqlite_handler)
@@ -63,11 +63,11 @@ def setup_logging(console_level: int = logging.INFO) -> None:
         root_logger.error(f"Failed to initialize SQLite logging handler: {e}. Logging to DB will be disabled.")
 
     # --- Loki Handler (conditional) ---
-    if config.LOKI_ENABLED:
+    if app_globals.LOKI_ENABLED:
         try:
-            loki_handler = LokiHandler(url=config.LOKI_URL, org_id=config.LOKI_ORG_ID)
-            loki_handler.setLevel(logging.INFO) # Avoid spamming Loki with DEBUG logs
+            loki_handler = LokiHandler(url=app_globals.LOKI_URL, org_id=app_globals.LOKI_ORG_ID)
+            loki_handler.setLevel(logging.INFO)
             root_logger.addHandler(loki_handler)
-            root_logger.info(f"Grafana Loki logging handler initialized for {config.LOKI_URL}.")
+            root_logger.info(f"Grafana Loki logging handler initialized for {app_globals.LOKI_URL}.")
         except Exception as e:
             root_logger.error(f"Failed to initialize Grafana Loki logging handler: {e}")

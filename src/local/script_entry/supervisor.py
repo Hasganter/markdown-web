@@ -6,7 +6,8 @@ supervision loop. This clean separation avoids circular dependencies and
 ensures the supervisor process has a simple, dedicated startup routine.
 """
 import setproctitle
-from src.local.manager import ProcessManager
+from src.local.supervisor import ProcessManager
+
 
 if __name__ == "__main__":
     setproctitle.setproctitle("MDWeb - Supervisor")
