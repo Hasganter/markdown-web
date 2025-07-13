@@ -94,7 +94,7 @@ def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple
                 
                 # Call the 'format' function from the template's __init__.py
                 final_html = template_module.format(
-                    markdown_content=html_fragment,
+                    content=html_fragment,
                     context=context,
                     custom_html=template_cfg.get("HTML", ""),
                     custom_css=template_cfg.get("CSS", ""),

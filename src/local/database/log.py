@@ -134,19 +134,22 @@ class LogDBManager(BaseDBManager):
             log.error(f"Failed to insert log batch of {len(log_entries)} entries: {e}", exc_info=True)
             raise
 
-    def fetch_last_entries(self, limit: int) -> List[LogEntry]:
+    def fetch_last_entries(self, limit: int, debug_level: bool = False) -> List[LogEntry]:
         """
         Fetches the most recent N log entries from the database.
 
         :param limit: The maximum number of log entries to retrieve.
+        :param debug_level: If False, DEBUG level logs will be excluded from results.
         :return list: A list of LogEntry namedtuples.
         """
         entries = []
         try:
-            rows = self.fetch_all(
-                "SELECT timestamp, level, module, message FROM logs ORDER BY timestamp DESC LIMIT ?",
-                (limit,)
-            )
+            query = "SELECT timestamp, level, module, message FROM logs"
+            if not debug_level:
+                query += " WHERE level != 'DEBUG'"
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            
+            rows = self.fetch_all(query, (limit,))
             # Reverse the results to show oldest first.
             for row in reversed(rows):
                 dt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(row['timestamp']))

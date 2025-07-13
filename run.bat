@@ -22,7 +22,6 @@ if not exist "%PROJECT_DIR%_ROOT-INDEX_" mkdir "%PROJECT_DIR%_ROOT-INDEX_"
 if not exist "%PROJECT_DIR%_ROOT-INDEX_\.assets" mkdir "%PROJECT_DIR%_ROOT-INDEX_\.assets"
 
 
-
 :: ============================================================================
 :: Argument Parsing and Cleanup
 :: ============================================================================
@@ -101,6 +100,34 @@ shift
 goto :arg_loop_collect
 :arg_loop_collect_end
 
+
+:: ============================================================================
+:: Setup Check
+:: ============================================================================
+:: If the PID file exists, we assume the environment is set up and skip the
+:: lengthy checks, jumping directly to activating the venv and running the app.
+:: The 'cbin' or 'fresh' commands above will have already deleted this file,
+:: which correctly forces a full setup on the next run.
+
+if not exist "%PROJECT_DIR%bin\assets" mkdir "%PROJECT_DIR%bin\assets"
+
+if exist "%PID_FILE_PATH%" (
+    echo.
+    echo PID file found.
+    echo Skipping batch argument processing.
+    echo Assuming environment is ready.
+    goto :run_application
+)
+
+echo.
+echo PID file not found. Performing full setup...
+echo.
+
+
+:: ============================================================================
+:: Cleanup run
+:: ============================================================================
+
 if %CLEAR_LOG%==1 (
     if exist "%PROJECT_DIR%logs" (
         echo Deleting files in logs...
@@ -128,28 +155,6 @@ if %END_EARLY%==1 (
     endlocal
     exit /b 0
 )
-
-
-:: ============================================================================
-:: Setup Check
-:: ============================================================================
-:: If the PID file exists, we assume the environment is set up and skip the
-:: lengthy checks, jumping directly to activating the venv and running the app.
-:: The 'cbin' or 'fresh' commands above will have already deleted this file,
-:: which correctly forces a full setup on the next run.
-
-if not exist "%PROJECT_DIR%bin\assets" mkdir "%PROJECT_DIR%bin\assets"
-
-if exist "%PID_FILE_PATH%" (
-    echo.
-    echo PID file found. Assuming environment is ready and skipping full setup.
-    goto :run_application
-)
-
-echo.
-echo PID file not found. Performing full one-time environment setup...
-echo This may take a moment. Subsequent runs will be faster.
-echo.
 
 
 :: ============================================================================
@@ -236,6 +241,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 echo.
+
 
 :: ============================================================================
 :: Application Execution

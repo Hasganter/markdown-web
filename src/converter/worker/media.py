@@ -47,8 +47,10 @@ def _copy_static_asset(source_path: Path) -> None:
 def _convert_media_asset(source_path: Path, media_type: str) -> None:
     """Convert a media asset using FFmpeg."""
     output_map = {'image': '.avif', 'video': '.webm', 'audio': '.mp3'}
-    output_filename = source_path.name + output_map[media_type]
-    output_path = app_globals.ASSETS_OUTPUT_DIR / output_filename
+    relative_path = source_path.relative_to(app_globals.ROOT_INDEX_DIR / ".assets")
+    output_file = relative_path.with_suffix(output_map[media_type])
+    output_path = app_globals.ASSETS_OUTPUT_DIR / output_file
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if output_path.exists() and output_path.stat().st_mtime > source_path.stat().st_mtime:
         log.debug(f"Skipping asset conversion, '{output_path.name}' is up-to-date.")

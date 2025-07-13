@@ -38,7 +38,6 @@ except ImportError:
 log = logging.getLogger(__name__)
 current_overrides: dict = {}
 process_manager = ProcessManager()
-VERBOSE_LOGGING = app_globals.VERBOSE_LOGGING
 
 
 def load_current_overrides() -> None:
@@ -156,29 +155,6 @@ def handle_config_command(args: List[str]) -> None:
     else:
         print(f"Unknown config sub-command: '{sub_command}'. Type 'config help' for available commands.")
 
-def handle_config_command(args: List[str]) -> None:
-    """
-    Handles all sub-commands for the 'app_globals' command-line interface.
-
-    :param args: A list of string arguments following the 'app_globals' command.
-    """
-    if not args:
-        print("Usage: app_globals <show|set|save|load|help>")
-        return
-
-    sub_command = args[0].lower()
-    sub_command_map = {
-        "show": _config_show(),
-        "set": _config_set(args),
-        "save": _config_save(),
-        "load": _config_load(),
-        "help": _config_help()
-    }
-    if sub_command in sub_command_map:
-        sub_command_map[sub_command]()
-    else:
-        print(f"Unknown app_globals sub-command: '{sub_command}'. Type 'app_globals help' for available commands.")
-
 def handle_recover_command(args: List[str]):
     """Handles the 'recover' command for dependencies."""
     if process_manager.get_pid_info():
@@ -253,7 +229,6 @@ def handle_logs_command() -> None:
     """
     Handles the 'logs' command, providing a blocking, interactive log tail.
     """
-    global VERBOSE_LOGGING
     if not process_manager.get_pid_info():
         print("Application is not running. Cannot tail logs.")
         return
@@ -265,12 +240,7 @@ def handle_logs_command() -> None:
     last_ts = 0.0
     try:
         # Use the manager method to fetch logs.
-        for log in log_db.fetch_last_entries(app_globals.LOG_HISTORY_COUNT):
-            if (
-                (isinstance(log.level, int) and log.level == logging.DEBUG) or
-                (isinstance(log.level, str) and log.level.upper() == "DEBUG")
-            ) and not VERBOSE_LOGGING:
-                continue
+        for log in log_db.fetch_last_entries(app_globals.LOG_HISTORY_COUNT, app_globals.VERBOSE_LOGGING):
             print(log.message)
             last_ts = max(last_ts, log.timestamp)
     except Exception as e:
@@ -284,7 +254,7 @@ def handle_logs_command() -> None:
             # Use the manager method to listen for updates.
             new_logs, last_ts = log_db.listen_for_updates(last_ts)
             for log in new_logs:
-                if log.level == logging.DEBUG and not VERBOSE_LOGGING:
+                if log.level == "DEBUG" and not app_globals.VERBOSE_LOGGING:
                     continue
                 print(log.message)
             time.sleep(1) # Poll interval
@@ -298,9 +268,8 @@ def handle_logs_command() -> None:
 
 def toggle_verbose_logging() -> None:
     """Toggles verbose (DEBUG level) logging for the console handler."""
-    global VERBOSE_LOGGING
-    VERBOSE_LOGGING = not VERBOSE_LOGGING
-    new_level = logging.DEBUG if VERBOSE_LOGGING else logging.INFO
+    app_globals.VERBOSE_LOGGING = not app_globals.VERBOSE_LOGGING
+    new_level = logging.DEBUG if app_globals.VERBOSE_LOGGING else logging.INFO
 
     # Reglobalsure the console handler's level directly
     root_logger = logging.getLogger()
@@ -311,7 +280,7 @@ def toggle_verbose_logging() -> None:
             found_handler = True
             break
     
-    status = "ON" if VERBOSE_LOGGING else "OFF"
+    status = "ON" if app_globals.VERBOSE_LOGGING else "OFF"
     if found_handler:
         print(f"Verbose console logging is now {status}.")
         log.debug("Debug logging test: This message should only appear when verbose is ON.")
@@ -327,8 +296,8 @@ def print_help():
     print("  status                 - Show the current status of all services.")
     print("  logs                   - View historical logs and tail new logs in real-time.")
     print("  export-logs [filename] - Export application logs to a styled Excel file.")
-    print("  check-app_globals           - Validate paths to external binaries (Nginx, FFmpeg).")
-    print("  app_globals <cmd>           - Manage globalsuration. Use 'app_globals help' for more details.")
+    print("  check-config           - Validate paths to external binaries (Nginx, FFmpeg).")
+    print("  config <cmd>           - Manage globalsuration. Use 'app_globals help' for more details.")
     print("  recover <name>         - Recover an archived version of a dependency (server must be stopped).")
     print("  verbose                - Toggle detailed DEBUG log output in the console.")
     print("  exit                   - Exit the management console.")
