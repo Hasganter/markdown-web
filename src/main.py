@@ -23,7 +23,6 @@ process_manager = ProcessManager()
 
 def main() -> None:
     """The main entry point for the console application."""
-    console.load_current_overrides()
 
     # The very first thing we do is set up logging for the console.
     # The 'start' command will call this again for the subprocesses.

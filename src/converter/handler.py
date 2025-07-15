@@ -31,7 +31,7 @@ class ContentChangeHandler(FileSystemEventHandler):
         super().__init__()
         self.pool = pool
         self.debounce_cache: Dict[Path, float] = {}
-        self.debounce_interval = 1.0
+        self.debounce_interval = app_globals.WATCHDOG_DEBOUNCE_SECONDS
 
     def _get_relevant_paths(self, event_path_str: str) -> Tuple[Optional[Path], Optional[str]]:
         """

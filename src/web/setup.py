@@ -1,3 +1,6 @@
+import setproctitle
+setproctitle.setproctitle("MDWeb - ASGI Server")
+
 import asyncio
 import sqlite3
 import logging
@@ -46,11 +49,10 @@ async def get_page_data_from_db(path_key: str) -> Optional[Dict[str, Any]]:
 
 def get_subdomain_and_path(request: Request) -> Tuple[str, str]:
     """Parses the request to determine the subdomain and web path."""
-    host = request.headers.get("host", app_globals.APP_DOMAIN).lower()
-    host = host.removesuffix(app_globals.APP_DOMAIN.lower()).removesuffix(app_globals.APP_DOMAIN.lower().removesuffix(f":{app_globals.NGINX_PORT}"))
+    host = request.headers.get("host", app_globals.APP_PUBLIC_HOSTNAME).lower()
+    host = host.removesuffix(app_globals.APP_PUBLIC_HOSTNAME.lower()).removesuffix(app_globals.APP_PUBLIC_HOSTNAME.lower().removesuffix(f":{app_globals.NGINX_PORT}"))
     subdomain = "main"
 
-    log.debug(f"Host after removing app domain: {host}")
     if host.endswith("."):
         subdomain = host.removesuffix(".")
 
@@ -156,9 +158,5 @@ else:
 
 # The main application object to be loaded by Hypercorn
 app = Starlette(debug=False, routes=routes, middleware=middleware)
-
-# Set the process title when the module is loaded by Hypercorn
-import setproctitle
-setproctitle.setproctitle("MDWeb - ASGI Server")
 
 log.info("Starlette ASGI web server worker configured and ready.")

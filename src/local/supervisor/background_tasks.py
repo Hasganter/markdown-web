@@ -30,7 +30,7 @@ def _tail_nginx_log_file(manager: "ProcessManager", log_path: Path):
     try:
         with open(log_path, 'r', encoding='utf-8') as f:
             f.seek(0, os.SEEK_END)
-            while not manager.stop_tailing_event.is_set():
+            while not manager.shutdown_signal_received.is_set():
                 line = f.readline()
                 if not line:
                     time.sleep(0.2)
@@ -53,7 +53,7 @@ def start_nginx_log_tailing(manager: "ProcessManager") -> None:
     :param manager: The ProcessManager instance.
     """
     nginx_log_path = app_globals.BIN_DIR / "logs" / "access.log"
-    manager.stop_tailing_event.clear()
+    manager.shutdown_signal_received.clear()
     tail_thread = threading.Thread(
         target=_tail_nginx_log_file,
         args=(manager, nginx_log_path,),

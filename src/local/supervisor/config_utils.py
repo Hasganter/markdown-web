@@ -61,9 +61,10 @@ def write_config_files() -> None:
 
         nginx_conf_target = nginx_bin_conf / "nginx.conf"
         nginx_conf = app_globals.NGINX_CONFIG_TEMPLATE.format(
+            listen_ip=app_globals.NGINX_LISTEN_IP,
             listen_port=app_globals.NGINX_PORT,
-            assets_server_name=f"{app_globals.ASSETS_SUBDOMAIN_NAME}.{app_globals.APP_DOMAIN}",
-            server_name=app_globals.APP_DOMAIN,
+            assets_server_name=f"{app_globals.ASSETS_SUBDOMAIN_NAME}.{app_globals.APP_PUBLIC_HOSTNAME}",
+            server_name=app_globals.APP_PUBLIC_HOSTNAME,
             assets_output_dir=str(app_globals.ASSETS_OUTPUT_DIR.resolve()).replace("\\", "/"),
             asgi_host=app_globals.WEB_SERVER_HOST,
             asgi_port=app_globals.WEB_SERVER_PORT,

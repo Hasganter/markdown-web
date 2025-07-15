@@ -91,16 +91,17 @@ def process_content_directory(dir_path: Path, subdomain: Optional[str]) -> Tuple
                 # Dynamically import the template package
                 template_module = importlib.import_module(f"templates.{module_name}")
                 log.info(f"Using template '{template_name}' for page '{path_key}'.")
-                
+
                 # Call the 'format' function from the template's __init__.py
                 final_html = template_module.format(
                     content=html_fragment,
                     context=context,
+                    app_globals=app_globals,
                     custom_html=template_cfg.get("HTML", ""),
                     custom_css=template_cfg.get("CSS", ""),
                     custom_js=template_cfg.get("JS", "")
                 )
-            except (ImportError, AttributeError, FileNotFoundError) as e:
+            except Exception as e:
                 log.error(f"Failed to load or use template '{template_name}' for {path_key}: {e}. Using basic fallback.")
                 final_html = _get_fallback_html(html_fragment, context)
         else:

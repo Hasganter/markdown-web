@@ -184,11 +184,13 @@ if not exist "%PROJECT_DIR%.env" (
     echo.
     echo .env file not found. Creating a default one...
     (
-        echo #  Core Settings 
-        echo MYAPP_DOMAIN="localhost:8080"
+        echo #  Public Hostname ^(used by Nginx to identify your site^)
+        echo APP_PUBLIC_HOSTNAME="localhost:8080"
         echo.
         echo #  Nginx Settings ^(The public-facing server^)
-        echo NGINX_HOST="0.0.0.0"
+        echo # Use "0.0.0.0" to listen on all network interfaces ^(for LAN/public access^)
+        echo # Use "127.0.0.1" to listen only on the local machine.
+        echo NGINX_LISTEN_IP="0.0.0.0"
         echo NGINX_PORT="8080"
         echo.
         echo #  Hypercorn ASGI Server Settings ^(The Python application server^)
@@ -208,11 +210,10 @@ if not exist "%PROJECT_DIR%.env" (
         echo.
         echo #  DDoS Protection ^(Handled by Nginx^)
         echo DDOS_PROTECTION_ENABLED="False"
-        echo .
+        echo.
         echo #  Python Executable
         echo # Options: "python.exe", "pythonw.exe", or full path to specific Python executable
         echo PYTHON_EXECUTABLE="pythonw.exe"
-        echo.
     ) > "%PROJECT_DIR%.env"
     echo Default .env file created. Please review it before running in production.
 )

@@ -21,7 +21,9 @@ EXTERNAL_DIR = BASE_DIR / "external"
 LOGS_DIR = BASE_DIR / "logs"
 
 #* --- Domain & App Settings ---
-APP_DOMAIN = os.getenv("MYAPP_DOMAIN", "localhost:8080")
+# APP_PUBLIC_HOSTNAME is used by Nginx for the `server_name` directive to match incoming requests.
+# It should be the public-facing domain name, e.g., "example.com" or "localhost:8080".
+APP_PUBLIC_HOSTNAME = os.getenv("APP_PUBLIC_HOSTNAME", "localhost:8080")
 ASSETS_SUBDOMAIN_NAME = "assets"
 
 #* --- Application File Paths ---
@@ -54,7 +56,9 @@ elif PYTHON_EXECUTABLE == DEFAULT_PYTHON_EXE:
     # Default fallback to sys.executable
     PYTHON_EXECUTABLE = sys.executable
 
-#* --- Manager/Supervisor Settings ---
+#* --- Supervisor & Internal API ---
+CONFIG_API_HOST = "127.0.0.1"
+CONFIG_API_PORT = int(os.getenv("CONFIG_API_PORT", "9999"))
 SUPERVISOR_SLEEP_INTERVAL = 2
 MAX_RESTART_ATTEMPTS = 3
 RESTART_COOLDOWN_PERIOD = 30   # seconds
@@ -72,12 +76,21 @@ ASGI_WORKERS = int(os.getenv("ASGI_WORKERS", "0")) or (multiprocessing.cpu_count
 HYPERCORN_CONFIG_PATH = BIN_DIR / "hypercorn_config.py"
 
 # Nginx (Reverse Proxy) - public-facing server
-NGINX_HOST = os.getenv("NGINX_HOST", "0.0.0.0")
+# NGINX_LISTEN_IP is the IP address Nginx binds to. '0.0.0.0' means listen on all available network interfaces.
+NGINX_LISTEN_IP = os.getenv("NGINX_LISTEN_IP", "0.0.0.0")
 NGINX_PORT = int(os.getenv("NGINX_PORT", "8080"))
 NGINX_SOURCE_PATH = EXTERNAL_DIR / "nginx"
 NGINX_RATELIMIT_ZONE_SIZE = "10m" # Shared memory zone size for rate limiting
 NGINX_RATELIMIT_RATE = "5r/s"     # Rate limit (e.g., 5 requests per second)
 NGINX_RATELIMIT_BURST = "20"      # How many requests to allow in a burst
+
+#* --- Process Identification ---
+# A set of process titles used by GlobalSync to determine if a process
+# should fetch its config from the Supervisor API.
+MANAGED_PROCESS_TITLES = {
+    "MDWeb - ContentConverter",
+    "MDWeb - ASGI Server",
+}
 
 #* --- Optional Services ---
 # Ngrok (for development)
@@ -99,18 +112,24 @@ stop_log_listener = threading.Event()
 MODIFIABLE_SETTINGS = {
     # Markdown Converter
     "MARKDOWN_SCAN_INTERVAL_SECONDS",
+    "WATCHDOG_DEBOUNCE_SECONDS",
     # Logging
     "LOG_BUFFER_SIZE", "LOG_BUFFER_FLUSH_INTERVAL",
+    "LOKI_LOG_BATCH_SIZE",
     "MAX_LOG_DB_SIZE_MB", "LOG_DB_SIZE_CHECK_INTERVAL_SECONDS", "LOG_HISTORY_COUNT",
     # DDoS Protection (Python fallback)
     "DDOS_PROTECTION_ENABLED", "REQUESTS_LIMIT_PER_WINDOW",
-    "REQUESTS_WINDOW_SECONDS", "BLOCK_DURATION_SECONDS"
+    "REQUESTS_WINDOW_SECONDS", "BLOCK_DURATION_SECONDS",
+    # Supervisor
+    "SUPERVISOR_SLEEP_INTERVAL", "MAX_RESTART_ATTEMPTS", "RESTART_COOLDOWN_PERIOD",
 }
 
 #* --- Default Values for Modifiable Settings ---
 MARKDOWN_SCAN_INTERVAL_SECONDS = 12 * 3600  # 12 hours
+WATCHDOG_DEBOUNCE_SECONDS = 1.0
 LOG_BUFFER_SIZE = 100
 LOG_BUFFER_FLUSH_INTERVAL = 10
+LOKI_LOG_BATCH_SIZE = 200
 MAX_LOG_DB_SIZE_MB = 100
 LOG_DB_SIZE_CHECK_INTERVAL_SECONDS = 12 * 3600 # 12 hours
 LOG_HISTORY_COUNT = 50
@@ -219,7 +238,7 @@ http {{
     # SERVER 1: Assets Subdomain (assets.domain.com)
     # Serves pre-optimized media directly from bin/assets.
     server {{
-        listen {listen_port};
+        listen {listen_ip}:{listen_port};
         server_name {assets_server_name};
 
         # Apply rate limiting. Burst allows short spikes. Nodelay serves burst requests instantly.
@@ -262,7 +281,7 @@ http {{
     # SERVER 2: Main Application (domain.com)
     # Proxies all other traffic to the backend ASGI server.
     server {{
-        listen {listen_port};
+        listen {listen_ip}:{listen_port};
         server_name {server_name};
 
         limit_req zone=global_limit burst={burst} nodelay;

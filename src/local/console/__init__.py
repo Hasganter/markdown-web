@@ -4,6 +4,6 @@ loading overrides, toggling verbose logging, and printing help information.
 """
 
 from .process import execute_command
-from .handler import load_current_overrides, toggle_verbose_logging, print_help
+from .handler import toggle_verbose_logging, print_help
 
-__all__ = ["execute_command", "load_current_overrides", "toggle_verbose_logging", "print_help"]
+__all__ = ["execute_command", "toggle_verbose_logging", "print_help"]

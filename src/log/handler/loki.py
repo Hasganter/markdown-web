@@ -27,7 +27,7 @@ class LokiHandler(logging.Handler):
         self.log_buffer: Deque[Dict[str, Any]] = deque()
         self.buffer_lock = threading.Lock()
         self.flush_interval = app_globals.LOG_BUFFER_FLUSH_INTERVAL
-        self.batch_size = 200 # Flush when buffer reaches this size (MB)
+        self.batch_size = app_globals.LOKI_LOG_BATCH_SIZE
         
         # Get hostname in a cross-platform way
         self.hostname = os.getenv('COMPUTERNAME') or os.getenv('HOSTNAME')

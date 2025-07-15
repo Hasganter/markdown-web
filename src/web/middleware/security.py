@@ -8,7 +8,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Adds security-related HTTP headers to every response."""
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
-        asset_host = f"{app_globals.ASSETS_SUBDOMAIN_NAME}.{app_globals.APP_DOMAIN}"
+        asset_host = f"{app_globals.ASSETS_SUBDOMAIN_NAME}.{app_globals.APP_PUBLIC_HOSTNAME}"
         csp = (
             "default-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "

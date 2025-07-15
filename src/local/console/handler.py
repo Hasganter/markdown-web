@@ -1,14 +1,15 @@
 import os
 import sys
 import time
-import json
 import psutil
 import logging
+import requests
 from typing import List
 from src.local import app_globals
 from src.local.database import LogDBManager
 from src.local.supervisor import ProcessManager
 from src.local.external import DependencyManager
+from src.local.config_client import post_config_to_supervisor
 
 # --- Platform-specific non-blocking keypress detection ---
 try:
@@ -36,99 +37,81 @@ except ImportError:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
 log = logging.getLogger(__name__)
-current_overrides: dict = {}
 process_manager = ProcessManager()
 
 
-def load_current_overrides() -> None:
-    """
-    Loads existing globalsuration overrides from the JSON file into a global dict.
-    """
-    global current_overrides
-    if app_globals.OVERRIDES_JSON_PATH.exists():
-        try:
-            with app_globals.OVERRIDES_JSON_PATH.open('r') as f:
-                current_overrides = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            log.warning(f"Could not load overrides from json: {e}")
-            current_overrides = {}
-    else:
-        current_overrides = {}
-
 def _config_show():
-    """Displays the current configuration settings and their sources."""
+    """
+    Displays the current configuration settings. It fetches live data from the
+    Supervisor if running, otherwise it shows the local bootstrap config.
+    """
     print("\n--- Current Application Configuration ---")
-    print("Settings are shown as: KEY = VALUE (Source: Default/Override)")
-    # Reload from disk to show the true current state
-    load_current_overrides()
+    
+    config_source = "Local Bootstrap"
+    effective_config = {key: app_globals.get(key) for key in app_globals.MODIFIABLE_SETTINGS}
+
+    # If the app is running, try to get live config from the supervisor.
+    if process_manager.get_pid_info():
+        try:
+            url = f"http://{app_globals.CONFIG_API_HOST}:{app_globals.CONFIG_API_PORT}/config"
+            response = requests.get(url, timeout=2)
+            response.raise_for_status()
+            live_config = response.json()
+            
+            # Update our view with the live data for modifiable settings
+            for key in app_globals.MODIFIABLE_SETTINGS:
+                if key in live_config:
+                    effective_config[key] = live_config[key]
+            config_source = f"Live from Supervisor (PID: {process_manager.get_pid_info().get('supervisor')})"
+        except requests.RequestException:
+            config_source = "Local Bootstrap (Supervisor API unreachable)"
+            
+    print(f"(Source: {config_source})")
+    
     for key in sorted(app_globals.MODIFIABLE_SETTINGS):
-        if not hasattr(app_globals, key):
-            continue  # Skip if the setting does not exist in the config object
-        value = getattr(app_globals, key)
-        source = "Override" if key in current_overrides else "Default"
-        print(f"  {key} = {value} (Source: {source})")
+        value = effective_config.get(key, 'N/A')
+        print(f"  {key} = {value}")
+        
     print("---")
-    print("Use 'config set <KEY> <VALUE>' to change a setting for the current session.")
-    print("Use 'config save' to persist session changes.")
+    print("Use 'config set <KEY> <VALUE>' to change a setting (requires app to be running).")
+    print("A restart is required for changes to apply to all services.")
     print("---------------------------------------\n")
 
 def _config_set(args: List[str]):
-    """Sets a configuration setting for the current session."""
-    global current_overrides
+    """Sets a configuration setting by calling the Supervisor's API."""
+    if not process_manager.get_pid_info():
+        print("\nERROR: Cannot change configuration while the application is stopped.")
+        print("Please run the 'start' command first.\n")
+        return
+
     if len(args) < 2:
         print("Usage: config set <SETTING_NAME> <VALUE>")
         return
+        
     key, value_str = args[0].upper(), " ".join(args[1:])
 
     if key not in app_globals.MODIFIABLE_SETTINGS:
-        print(f"Error: '{key}' is not a modifiable setting or does not exist.")
+        print(f"Error: '{key}' is not a modifiable setting.")
         return
 
-    if not hasattr(app_globals, key):
-        # This check is somewhat redundant due to the one above but is good practice.
-        print(f"Error: Setting '{key}' not found in configuration.")
-        return
-
-    original_value = getattr(app_globals, key)
-    try:
-        # Handle boolean conversion gracefully
-        if isinstance(original_value, bool):
-            new_value = value_str.lower() in ('true', '1', 't', 'yes', 'y')
-        else:
-            new_value = type(original_value)(value_str)
-
-        current_overrides[key] = new_value
-        setattr(app_globals, key, new_value) # Apply change to current session
-        print(f"Set '{key}' to '{new_value}'. This change is temporary.")
-        print("Use 'config save' to make it permanent (requires restart to apply fully).")
-    except (ValueError, TypeError):
-        err_msg = (f"Error: Could not convert '{value_str}' to the required type "
-                  f"({type(original_value).__name__}).")
-        print(err_msg)
-
-def _config_save():
-    """Saves the current overrides to the JSON file."""
-    global current_overrides
-    if not current_overrides:
-        print("No temporary overrides to save.")
-        return
-    app_globals.save_overrides(current_overrides)
-    print("Overrides saved to bin/overrides.json.")
-    print("A restart is required for changes to take full effect.")
-
-def _config_load():
-    """Reloads the overrides from the JSON file."""
-    load_current_overrides()
-    # To apply, settings object needs to be re-initialized, which means restart.
-    print("Reloaded overrides from file. A restart is required to apply them.")
+    # Send the update to the supervisor
+    success = post_config_to_supervisor(
+        host=app_globals.CONFIG_API_HOST,
+        port=app_globals.CONFIG_API_PORT,
+        key=key,
+        value=value_str
+    )
+    if success:
+        print(f"Configuration update for '{key}' sent to Supervisor.")
+        print("A restart ('restart' command) is required for the change to take full effect across all services.")
+    else:
+        print(f"Failed to update configuration for '{key}'. Check logs for details.")
 
 def _config_help():
     """Displays help for the config command."""
     print("\nConfig Command Help:")
-    print("  config show                - Display all modifiable settings and their source.")
-    print("  config set KEY VALUE       - Temporarily change a setting for the current session.")
-    print("  config save                - Save temporary changes to bin/overrides.json.")
-    print("  config load                - Reload overrides from the file (requires restart).")
+    print("  config show                - Display all modifiable settings.")
+    print("  config set KEY VALUE       - Change a setting. Requires a restart to apply fully.")
     print("  config help                - Show this help message.")
     print("Use 'check-config' to validate external binary paths.")
 
@@ -139,19 +122,16 @@ def handle_config_command(args: List[str]) -> None:
     :param args: A list of string arguments following the 'config' command.
     """
     if not args:
-        print("Usage: config <show|set|save|load|help>")
-        return
+        sub_command = "show" # Default to showing config
+    else:
+        sub_command = args[0].lower()
 
-    sub_command = args[0].lower()
-    sub_command_map = {
-        "show": _config_show(),
-        "set": _config_set(args),
-        "save": _config_save(),
-        "load": _config_load(),
-        "help": _config_help()
-    }
-    if sub_command in sub_command_map:
-        sub_command_map[sub_command]()
+    if sub_command == "show":
+        _config_show()
+    elif sub_command == "set":
+        _config_set(args[1:])
+    elif sub_command == "help":
+        _config_help()
     else:
         print(f"Unknown config sub-command: '{sub_command}'. Type 'config help' for available commands.")
 
@@ -218,7 +198,8 @@ def display_status() -> None:
             all_stale = False
 
     print(f"\nTOTAL CPU: {total_cpu:.1f}%  |  TOTAL MEMORY: {total_mem/1024/1024:.1f} MB")
-    print(f"Runtime: {time.strftime('%H:%M:%S', time.gmtime(time.time() - app_globals.start_time))}")
+    if app_globals.start_time:
+        print(f"Runtime: {time.strftime('%H:%M:%S', time.gmtime(time.time() - app_globals.start_time))}")
 
     if all_stale:
         print("\nWARNING: All processes are stopped but a stale PID file exists.")
@@ -240,9 +221,9 @@ def handle_logs_command() -> None:
     last_ts = 0.0
     try:
         # Use the manager method to fetch logs.
-        for log in log_db.fetch_last_entries(app_globals.LOG_HISTORY_COUNT, app_globals.VERBOSE_LOGGING):
-            print(log.message)
-            last_ts = max(last_ts, log.timestamp)
+        for log_entry in log_db.fetch_last_entries(app_globals.LOG_HISTORY_COUNT, app_globals.VERBOSE_LOGGING):
+            print(log_entry.message)
+            last_ts = max(last_ts, log_entry.timestamp)
     except Exception as e:
         log.error(f"Failed to fetch initial log history: {e}")
         return
@@ -253,10 +234,10 @@ def handle_logs_command() -> None:
         while not is_keypress_waiting():
             # Use the manager method to listen for updates.
             new_logs, last_ts = log_db.listen_for_updates(last_ts)
-            for log in new_logs:
-                if log.level == "DEBUG" and not app_globals.VERBOSE_LOGGING:
+            for log_entry in new_logs:
+                if log_entry.level == "DEBUG" and not app_globals.VERBOSE_LOGGING:
                     continue
-                print(log.message)
+                print(log_entry.message)
             time.sleep(1) # Poll interval
         clear_keypress_buffer()
         print("\n--- Log tailing stopped. Returning to console. ---")
@@ -271,7 +252,7 @@ def toggle_verbose_logging() -> None:
     app_globals.VERBOSE_LOGGING = not app_globals.VERBOSE_LOGGING
     new_level = logging.DEBUG if app_globals.VERBOSE_LOGGING else logging.INFO
 
-    # Reglobalsure the console handler's level directly
+    # Reconfigure the console handler's level directly
     root_logger = logging.getLogger()
     found_handler = False
     for handler in root_logger.handlers:
@@ -297,7 +278,7 @@ def print_help():
     print("  logs                   - View historical logs and tail new logs in real-time.")
     print("  export-logs [filename] - Export application logs to a styled Excel file.")
     print("  check-config           - Validate paths to external binaries (Nginx, FFmpeg).")
-    print("  config <cmd>           - Manage globalsuration. Use 'app_globals help' for more details.")
+    print("  config <cmd>           - Manage configuration. Use 'config help' for more details.")
     print("  recover <name>         - Recover an archived version of a dependency (server must be stopped).")
     print("  verbose                - Toggle detailed DEBUG log output in the console.")
     print("  exit                   - Exit the management console.")

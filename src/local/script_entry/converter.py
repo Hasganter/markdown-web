@@ -6,8 +6,10 @@ proper signal handling and multiprocessing setup. This clean separation
 avoids circular dependencies and ensures the content converter process
 has a simple, dedicated startup routine.
 """
-import signal
 import setproctitle
+setproctitle.setproctitle("MDWeb - ContentConverter")
+
+import signal
 from multiprocessing import Lock, Event
 from src.log.setup import setup_logging
 from src.converter import content_converter_process_loop
@@ -26,7 +28,6 @@ def handle_shutdown_signal(signum, frame):
         stop_event.set()
 
 if __name__ == "__main__":
-    setproctitle.setproctitle("MDWeb - ContentConverter")
     
     # Initialize multiprocessing primitives
     db_lock = Lock()

@@ -1,157 +1,105 @@
+import os
 import json
 import logging
+import setproctitle
 from pathlib import Path
 from typing import Dict, Any
 import src.settings as default_settings
+from src.local.config_client import fetch_config_from_supervisor
 
 log = logging.getLogger(__name__)
 
 
 class GlobalSync:
     """
-    A singleton class that houses default settings and global variables.
+    A singleton class that houses all application configuration.
 
-    This class provides a unified, attribute-based access point for all
-    application configuration and globals. It follows a clear precedence:
-    1. Base values from `settings.py`.
-    2. Overrides from `.env` file (handled by `python-dotenv` in settings.py).
-    3. Overrides from `overrides.json` for settings in `MODIFIABLE_SETTINGS`.
-    4. Global variables that are shared across the application.
+    Its behavior is process-aware:
+    - SUPERVISOR: Loads config from files and serves it via an API.
+    - MANAGED CHILD: Fetches authoritative config from the Supervisor's API.
+    - CLIENT/CONSOLE: Loads a minimal bootstrap config from files and acts as a
+      client to the Supervisor's API for dynamic operations.
     """
 
     def __init__(self) -> None:
-        """Initializes the settings object by loading defaults and overrides."""
-        # Path to the overrides file
-        self.OVERRIDES_JSON_PATH: Path = default_settings.OVERRIDES_JSON_PATH
-
+        """Initializes the settings object by loading from the correct source."""
+        self._config: Dict[str, Any] = {}
         self._load_defaults()
-        self._load_overrides()
 
-        # Initialize certain global variables
-        self.VERBOSE_LOGGING = default_settings.VERBOSE_LOGGING
+        # Determine the current process context
+        proc_title = setproctitle.getproctitle()
+
+        if "MDWeb - Supervisor" in proc_title:
+            log.debug("Config context: Supervisor. Loading from files.")
+            self._load_overrides_from_file()
+        elif proc_title in default_settings.MANAGED_PROCESS_TITLES:
+            log.debug(f"Config context: Managed Child ('{proc_title}'). Fetching from API.")
+            self._fetch_and_apply_supervisor_config()
+        else:
+            log.debug("Config context: Client/Console. Loading bootstrap config.")
+
+        # Dynamically set attributes on the instance from the final config dict
+        for key, value in self._config.items():
+            if not hasattr(self, key):
+                setattr(self, key, value)
+
+        # Initialize global variables not part of the main config dict
         self.stop_log_listener = default_settings.stop_log_listener
         self.start_time = None
 
-    def get(self, item: str) -> Any:
-        """
-        Provides attribute access to the settings.
+    def get(self, item: str, default: Any = None) -> Any:
+        """Provides dictionary-like access to settings with a default value."""
+        return self._config.get(item, default)
 
-        This allows dynamic access to settings as if they were attributes.
-        """
-        if item in self.__dict__:
-            return self.__dict__[item]
-        else:
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{item}'")
+    def __getattr__(self, name: str) -> Any:
+        """Allows attribute access to settings, raising an AttributeError if not found."""
+        if name in self._config:
+            return self._config[name]
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def _load_defaults(self) -> None:
-        """
-        Loads all uppercase attributes from the settings.py module as defaults.
-        """
+        """Loads all uppercase attributes from settings.py as the baseline."""
         for key in dir(default_settings):
             if key.isupper():
-                setattr(self, key, getattr(default_settings, key))
+                self._config[key] = getattr(default_settings, key)
 
-    def _load_overrides(self) -> None:
-        """
-        Loads and applies settings from the `overrides.json` file.
-
-        It will only apply overrides for keys that are explicitly listed in
-        the `MODIFIABLE_SETTINGS` set in `settings.py`.
-        """
-        if not self.OVERRIDES_JSON_PATH.exists():
+    def _load_overrides_from_file(self) -> None:
+        """(Supervisor Only) Loads overrides from the JSON file."""
+        overrides_path = Path(self._config["OVERRIDES_JSON_PATH"])
+        if not overrides_path.exists():
             return
 
         try:
-            with self.OVERRIDES_JSON_PATH.open('r') as f:
+            with overrides_path.open('r') as f:
                 overrides = json.load(f)
-
-            log.info(f"Loading runtime configuration overrides from {self.OVERRIDES_JSON_PATH}")
-            for key, value in overrides.items():
-                if hasattr(self, key):
-                    # Security: Only allow overriding whitelisted settings.
-                    if key not in self.MODIFIABLE_SETTINGS:
-                        log.warning(
-                            f"Attempted to override non-modifiable setting '{key}'. Ignoring."
-                        )
-                        continue
-
-                    # Coerce path strings back to Path objects if necessary
-                    original_value = getattr(self, key)
-                    if isinstance(original_value, Path):
-                        setattr(self, key, Path(value))
-                    else:
-                        setattr(self, key, value)
-                    log.debug(f"Overridden setting: {key} = {value}")
-                else:
-                    log.warning(f"Override setting '{key}' not found in default settings. Ignoring.")
+            log.info(f"Loading runtime config overrides from {overrides_path}")
+            # Merge the overrides into our config dictionary
+            self._config.update(overrides)
         except (json.JSONDecodeError, IOError) as e:
-            log.error(
-                f"Failed to load or parse overrides file '{self.OVERRIDES_JSON_PATH}': {e}"
-            )
+            log.error(f"Failed to load or parse overrides file: {e}")
 
-    def save_overrides(self, overrides_to_save: Dict[str, Any]) -> None:
-        """
-        Saves the provided dictionary of settings to the overrides JSON file.
+    def _fetch_and_apply_supervisor_config(self) -> None:
+        """(Managed Child Processes Only) Fetches config from Supervisor."""
+        supervisor_config = fetch_config_from_supervisor(
+            host=self._config["CONFIG_API_HOST"],
+            port=self._config["CONFIG_API_PORT"]
+        )
+        if supervisor_config:
+            self._config.update(supervisor_config)
+            self._coerce_path_objects()
+        else:
+            log.critical("Managed process could not retrieve configuration. This process will likely be unstable.")
 
-        This method defensively filters the dictionary to ensure only keys
-        present in `MODIFIABLE_SETTINGS` are persisted.
+    def _coerce_path_objects(self):
+        """Converts settings that should be Path objects from string to Path."""
+        for key, value in self._config.items():
+            default_value = getattr(default_settings, key, None)
+            if isinstance(default_value, Path) and isinstance(value, str):
+                self._config[key] = Path(value)
 
-        :param overrides_to_save: A dictionary of settings to persist.
-        """
-        # Filter to only save keys that are actually modifiable.
-        filtered_overrides = {
-            key: value
-            for key, value in overrides_to_save.items()
-            if key in self.MODIFIABLE_SETTINGS
-        }
+    def get_all_settings(self) -> Dict[str, Any]:
+        """Returns the entire configuration dictionary."""
+        return self._config
 
-        if not filtered_overrides:
-            log.warning("No modifiable settings provided to save.")
-            return
-
-        try:
-            with self.OVERRIDES_JSON_PATH.open('w') as f:
-                json.dump(filtered_overrides, f, indent=4)
-            log.info(
-                f"Configuration overrides saved to {self.OVERRIDES_JSON_PATH}"
-            )
-        except IOError as e:
-            log.error(
-                f"Failed to write to overrides file '{self.OVERRIDES_JSON_PATH}': {e}"
-            )
-    
-    # Dynamic methods for modifying settings at runtime
-    # Dangerous to use, only kept for reference.
-    # def append(self, settings: Dict[str, Any]) -> None:
-    #     """
-    #     Appends a single or multiple new key-value pair to the settings.
-
-    #     This method allows dynamic addition of new settings at runtime.
-    #     It will log a warning if the key already exists.
-
-    #     :param settings: A dictionary of key-value pairs to add.
-    #     """
-    #     for key, value in settings.items():
-    #         if hasattr(self, key):
-    #             log.warning(f"Setting '{key}' already exists. Overwriting.")
-    #         setattr(self, key, value)
-    #         log.info(f"Added setting: {key} = {value}")
-
-    # def delete(self, keys: list[str]) -> None:
-    #     """
-    #     Deletes a single or multiple key-value pair from the settings.
-
-    #     This method allows dynamic removal of settings at runtime.
-    #     It will log an error if the key does not exist.
-
-    #     :param keys: A list of keys to remove from the settings.
-    #     """
-    #     for key in keys:
-    #         if hasattr(self, key):
-    #             delattr(self, key)
-    #             log.info(f"Deleted setting: {key}")
-    #         else:
-    #             log.error(f"Attempted to delete non-existent setting '{key}'.")
-    
 # A singleton instance to be imported by other modules
 app_globals = GlobalSync()
